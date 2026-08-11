@@ -1,0 +1,71 @@
+# 快工单工序细化管理系统 - Docker 一键编排
+# 使用方式：docker compose up -d --build
+# 环境变量（KGD_*、JWT_SECRET 等）从项目根目录 .env 读取，可覆盖
+# 注意：项目目录为中文名，无法自动推断项目名，需显式指定
+name: kgd-process
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: kgd-process-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123456}
+      MYSQL_DATABASE: kgd_process
+      MYSQL_USER: kgd
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-kgd123456}
+      TZ: Asia/Shanghai
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-ukgd", "-p${MYSQL_PASSWORD:-kgd123456}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  server:
+    build: ./server
+    container_name: kgd-process-server
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      # 快工单 OpenAPI 凭证（来自根目录 .env）
+      KGD_BASE_URL: ${KGD_BASE_URL:-https://api.kgd.ltd}
+      KGD_API_KEY: ${KGD_API_KEY}
+      KGD_API_SECRET: ${KGD_API_SECRET}
+      KGD_USERNAME: ${KGD_USERNAME}
+      # 数据库连接（指向 compose 内的 mysql 服务）
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USERNAME: kgd
+      DB_PASSWORD: ${MYSQL_PASSWORD:-kgd123456}
+      DB_DATABASE: kgd_process
+      # 本地登录 JWT 密钥
+      JWT_SECRET: ${JWT_SECRET:-kgd-process-secret-key-2026}
+      TZ: Asia/Shanghai
+    ports:
+      - "${SERVER_PORT:-3000}:3000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/crafts').then(()=>process.exit(0)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: ./web
+    container_name: kgd-process-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      server:
+        condition: service_healthy
+
+volumes:
+  mysql_data:

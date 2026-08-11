@@ -1,0 +1,191 @@
+* {
+  box-sizing: border-box;
+}
+
+/* ===== Apple design tokens ===== */
+:root {
+  --brand-500: #007aff;
+  --background: #f2f2f7;
+  --card: #ffffff;
+  --foreground: #1d1d1f;
+  --secondary: #f2f2f7;
+  --secondary-foreground: #1d1d1f;
+  --muted: #f2f2f7;
+  --muted-foreground: #8e8e93;
+  --border: #e5e5ea;
+  --primary: #007aff;
+  --primary-foreground: #ffffff;
+  --success: #34c759;
+  --warning: #ff9500;
+  --destructive: #ff3b30;
+  --radius: 1.2rem;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05), 0 1px 3px -1px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 8px 24px -8px rgba(0, 0, 0, 0.12), 0 4px 8px -4px rgba(0, 0, 0, 0.06);
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  font-family: 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  min-height: 100vh;
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--background);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+/* ===== Element Plus Apple 主题覆写 ===== */
+:root {
+  --el-color-primary: #007aff;
+  --el-color-primary-dark-2: #0064d6;
+  --el-color-primary-light-3: #4d9dff;
+  --el-color-primary-light-5: #7ab8ff;
+  --el-color-primary-light-7: #b8d9ff;
+  --el-color-primary-light-8: #d1e6ff;
+  --el-color-primary-light-9: #eaf4ff;
+  --el-color-success: #34c759;
+  --el-color-success-dark-2: #26a844;
+  --el-color-success-light-3: #6fd88b;
+  --el-color-success-light-5: #9de4af;
+  --el-color-success-light-7: #c4efd1;
+  --el-color-success-light-8: #d8f4e0;
+  --el-color-success-light-9: #ecfaf0;
+  --el-color-warning: #ff9500;
+  --el-color-warning-dark-2: #d97f00;
+  --el-color-warning-light-3: #ffb54d;
+  --el-color-warning-light-5: #ffc77a;
+  --el-color-warning-light-7: #ffd9a8;
+  --el-color-warning-light-8: #ffe2bd;
+  --el-color-warning-light-9: #fff6e8;
+  --el-color-danger: #ff3b30;
+  --el-color-danger-dark-2: #d62f26;
+  --el-color-danger-light-3: #ff7a72;
+  --el-color-danger-light-5: #ffa39e;
+  --el-color-danger-light-7: #ffc7c4;
+  --el-color-danger-light-8: #ffd8d6;
+  --el-color-danger-light-9: #ffefee;
+  --el-color-error: #ff3b30;
+  --el-color-error-dark-2: #d62f26;
+  --el-color-error-light-3: #ff7a72;
+  --el-color-error-light-5: #ffa39e;
+  --el-color-error-light-7: #ffc7c4;
+  --el-color-error-light-8: #ffd8d6;
+  --el-color-error-light-9: #ffefee;
+  --el-border-radius-base: 12px;
+  --el-border-radius-small: 8px;
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: #f2f2f7;
+  --el-fill-color-light: #f5f5f7;
+  --el-text-color-primary: #1d1d1f;
+  --el-text-color-regular: #3c3c43;
+  --el-text-color-secondary: #8e8e93;
+  --el-border-color: #e5e5ea;
+  --el-border-color-light: #e5e5ea;
+  --el-border-color-lighter: #e5e5ea;
+  --el-border-color-extra-light: #f2f2f7;
+}
+
+.el-button {
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+.el-button--large {
+  border-radius: 999px;
+  height: 48px;
+}
+
+.el-input--large .el-input__wrapper {
+  min-height: 48px;
+  border-radius: 14px;
+}
+
+.el-dialog {
+  border-radius: 20px;
+}
+
+.el-dialog__header {
+  padding: 18px 20px 0;
+  margin-right: 0;
+}
+
+.el-dialog__body {
+  padding: 16px 20px;
+}
+
+.el-dialog__footer {
+  padding: 8px 20px 18px;
+}
+
+/* ===== MessageBox（完工/暂停/编程确认）Apple 风格 ===== */
+.el-message-box {
+  border-radius: 20px;
+  border: none;
+  padding: 20px;
+  width: min(85vw, 420px);
+  box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.18), 0 4px 12px -4px rgba(0, 0, 0, 0.08);
+}
+
+.el-message-box__header {
+  padding: 0 0 6px;
+}
+
+.el-message-box__title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--foreground);
+  letter-spacing: -0.01em;
+}
+
+.el-message-box__content {
+  padding: 6px 0 0;
+}
+
+.el-message-box__container {
+  align-items: flex-start;
+}
+
+.el-message-box__status {
+  font-size: 32px;
+  margin-right: 12px;
+  line-height: 1;
+}
+
+.el-message-box__message {
+  padding-left: 0;
+}
+
+.el-message-box__message p {
+  font-size: 14px;
+  line-height: 1.65;
+  color: #3c3c43;
+  word-break: break-all;
+  margin: 0;
+}
+
+.el-message-box__btns {
+  padding: 18px 0 0;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.el-message-box__btns .el-button {
+  border-radius: 999px;
+  height: 40px;
+  padding: 0 18px;
+  font-size: 14px;
+  margin: 0;
+}

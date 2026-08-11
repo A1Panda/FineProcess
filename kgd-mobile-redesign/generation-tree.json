@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "root": {
+    "id": "root",
+    "type": "root",
+    "name": "快工单工序细化管理系统 · 移动端重设计",
+    "children": [
+      {
+        "id": "page-login",
+        "type": "page",
+        "name": "登录",
+        "path": "pages/login.html",
+        "status": "generated"
+      },
+      {
+        "id": "page-dashboard",
+        "type": "page",
+        "name": "工作台",
+        "path": "pages/dashboard.html",
+        "status": "generated"
+      },
+      {
+        "id": "page-craft-biancheng",
+        "type": "page",
+        "name": "编程工序",
+        "path": "pages/craft-biancheng.html",
+        "status": "generated"
+      },
+      {
+        "id": "page-craft-other",
+        "type": "page",
+        "name": "雕刻工序",
+        "path": "pages/craft-other.html",
+        "status": "generated"
+      }
+    ]
+  }
+}

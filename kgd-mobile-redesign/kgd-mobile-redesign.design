@@ -1,0 +1,140 @@
+{
+  "data": [
+    {
+      "id": "page-login",
+      "title": "登录",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786414057000,
+      "canvasData": {
+        "x": 0,
+        "y": 0,
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 900,
+          "viewportWidth": 375,
+          "sourceHash": "fnv1a-3a3fd908",
+          "measuredAt": 1786414686129
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/login.html",
+        "interactions": [
+          {
+            "domId": "login-submit",
+            "targetPageId": "page-dashboard",
+            "transitionLabel": "登录成功"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-dashboard",
+      "title": "工作台",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786414057000,
+      "canvasData": {
+        "x": 309,
+        "y": 0,
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 900,
+          "viewportWidth": 375,
+          "sourceHash": "fnv1a-9d810159",
+          "measuredAt": 1786417605589
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/dashboard.html",
+        "interactions": [
+          {
+            "domId": "craft-entry-biancheng",
+            "targetPageId": "page-craft-biancheng",
+            "transitionLabel": "进入编程工序"
+          },
+          {
+            "domId": "craft-entry-carve",
+            "targetPageId": "page-craft-other",
+            "transitionLabel": "进入雕刻工序"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-craft-biancheng",
+      "title": "编程工序",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786414057000,
+      "canvasData": {
+        "x": 618,
+        "y": 0,
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 900,
+          "viewportWidth": 375,
+          "sourceHash": "fnv1a-48c6fdf7",
+          "measuredAt": 1786417605589
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/craft-biancheng.html",
+        "interactions": [
+          {
+            "domId": "back-dashboard",
+            "targetPageId": "page-dashboard",
+            "hideEdge": true,
+            "transitionLabel": "返回工作台"
+          }
+        ]
+      }
+    },
+    {
+      "id": "page-craft-other",
+      "title": "雕刻工序",
+      "type": "page",
+      "version": 1,
+      "createdAt": 1786414057000,
+      "canvasData": {
+        "x": 618,
+        "y": 496,
+        "group": 0,
+        "layoutSnapshot": {
+          "version": 1,
+          "contentHeight": 900,
+          "viewportWidth": 375,
+          "sourceHash": "fnv1a-7a292915",
+          "measuredAt": 1786417605589
+        }
+      },
+      "devMetadata": {
+        "htmlSrc": "pages/craft-other.html",
+        "interactions": [
+          {
+            "domId": "back-dashboard",
+            "targetPageId": "page-dashboard",
+            "hideEdge": true,
+            "transitionLabel": "返回工作台"
+          }
+        ]
+      }
+    }
+  ],
+  "config": {
+    "autoLayout": true,
+    "deviceType": "mobile",
+    "projectName": "快工单工序细化管理系统 · 移动端重设计",
+    "designLibrary": {
+      "name": "苹果",
+      "id": "dl_builtin_apple",
+      "version": null,
+      "scope": "built-in-global",
+      "path": "c:/Users/A1_Pa/.trae/design_libraries/dl_builtin_apple",
+      "versionSource": "metadata.json"
+    }
+  }
+}
