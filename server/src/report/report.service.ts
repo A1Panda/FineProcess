@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { KgdClientService } from '../kgd/kgd-client.service';
 import { KgdSyncService } from '../kgd/kgd-sync.service';
 import { KgdTaskCache } from '../kgd/kgd-task-cache.entity';
+import { KgdReportCache } from './kgd-report-cache.entity';
 import { JwtPayload } from '../auth/auth.service';
 
 export interface ReportWorkDto {
@@ -50,6 +51,7 @@ export class ReportService {
     private readonly kgdClient: KgdClientService,
     private readonly sync: KgdSyncService,
     @InjectRepository(KgdTaskCache) private readonly taskCache: Repository<KgdTaskCache>,
+    @InjectRepository(KgdReportCache) private readonly reportCache: Repository<KgdReportCache>,
   ) {}
 
   /** 报工：真实调用快工单，记录落本地 */
@@ -69,6 +71,8 @@ export class ReportService {
     if (dto.traceabilityCodes) payload.traceability_codes = dto.traceabilityCodes;
 
     const result = await this.kgdClient.addReportWorkRecord(payload);
+    // 记录本地报工时间（快工单报工接口不返回创建时间，用于弹窗展示）
+    await this.recordLocalReport(user, dto, result.data);
     // 报工成功后直接更新本地缓存，前端 reload 立即看到最新良品/不良品数（无需等同步）
     await this.updateTaskCacheAfterReport(dto);
     // 后台同步，用快工单真实数据校准缓存
@@ -106,6 +110,16 @@ export class ReportService {
     if (dto.workingMinutes !== undefined) payload.working_minutes = dto.workingMinutes;
 
     const result = await this.kgdClient.editReportWorkRecord(payload);
+    // 同步更新本地记录（保留原始报工时间，仅刷新数量/工时/备注）
+    await this.reportCache.update(
+      { reportId: Number(dto.id) },
+      {
+        validNum: String(dto.validNum),
+        wasteNum: String(dto.wasteNum),
+        workingMinutes: dto.workingMinutes ?? 0,
+        remark: dto.remark ?? null,
+      },
+    );
     // 按加工单重新汇总报工记录，立即刷新本地任务缓存（无需等同步）
     await this.recalcBillCache(dto.billCode);
     // 后台同步，用快工单真实数据最终校准
@@ -161,7 +175,7 @@ export class ReportService {
     return this.kgdClient.listReportRecords({ pageNo: 1, pageSize: 100, report_user_id: user.kgdUserId });
   }
 
-  /** 按加工单编号查报工记录，整理为前端展示结构 */
+  /** 按加工单编号查报工记录，整理为前端展示结构（合并本地报工时间） */
   async getReportsByBillCode(code: string) {
     const { data, count } = await this.kgdClient.listReportRecords({
       pageNo: 1,
@@ -181,7 +195,95 @@ export class ReportService {
       validMoney: r.valid_money ?? '0',
       priceModeName: r.price_mode_name ?? '',
       remark: r.remark ?? '',
+      reportTime: '',
     }));
+    await this.mergeLocalReportTime(code, list);
     return { code, list, total: count ?? list.length };
+  }
+
+  /** 合并本地报工时间：先按快工单记录ID精确匹配，匹配不到再按 工序+用户+数量 兜底 */
+  private async mergeLocalReportTime(code: string, list: Array<{ id: number; reportTime: string }>) {
+    const localRecs = await this.reportCache.findBy({ billCode: code });
+    if (!localRecs.length) return;
+    const used = new Set<number>();
+    for (const item of list) {
+      const byId = localRecs.find(
+        (l) => l.reportId && String(l.reportId) === String(item.id) && !used.has(l.id),
+      );
+      if (byId) {
+        used.add(byId.id);
+        item.reportTime = byId.reportTime;
+        continue;
+      }
+      const loose = localRecs.find(
+        (l) =>
+          !used.has(l.id) &&
+          l.craftName === (item as any).craftName &&
+          l.reportUserId === String((item as any).reportUserId) &&
+          l.validNum === String((item as any).validNum) &&
+          l.wasteNum === String((item as any).wasteNum),
+      );
+      if (loose) {
+        used.add(loose.id);
+        item.reportTime = loose.reportTime;
+      }
+    }
+  }
+
+  /** 报工成功后记录本地报工时间：优先取 add 接口直接返回的ID，否则按任务+用户反查最新一条 */
+  private async recordLocalReport(user: JwtPayload, dto: ReportWorkDto, addData: unknown) {
+    const task = await this.taskCache.findOneBy({ taskId: dto.produceCraftId });
+    if (!task) return;
+    const directId =
+      (addData as any)?.id ?? (Array.isArray(addData) ? (addData[0]?.id ?? null) : null);
+    const reportId = directId
+      ? Number(directId)
+      : await this.findLatestReportId(dto.produceCraftId, user.kgdUserId, dto);
+    await this.reportCache.save(
+      this.reportCache.create({
+        reportId,
+        billCode: task.billCode,
+        craftName: task.craftName,
+        reportUserId: String(user.kgdUserId),
+        reportUserName: user.name ?? '',
+        validNum: String(dto.validNum),
+        wasteNum: String(dto.wasteNum),
+        workingMinutes: dto.workingMinutes ?? 0,
+        reportTime: this.formatTime(new Date()),
+        remark: dto.remark ?? null,
+      }),
+    );
+  }
+
+  /** 反查刚创建的报工记录ID（同任务同用户、数量匹配且 id 最大） */
+  private async findLatestReportId(
+    craftId: number,
+    userId: number | string,
+    dto: ReportWorkDto,
+  ): Promise<number | null> {
+    try {
+      const { data } = await this.kgdClient.listReportRecords({
+        pageNo: 1,
+        pageSize: 10,
+        produce_bill_craft_id: craftId,
+        report_user_id: userId,
+      });
+      const hit = (data ?? [])
+        .filter(
+          (r: Record<string, any>) =>
+            String(r.valid_num) === String(dto.validNum) &&
+            String(r.waste_num) === String(dto.wasteNum),
+        )
+        .sort((a: Record<string, any>, b: Record<string, any>) => Number(b.id) - Number(a.id))[0];
+      return hit ? Number(hit.id) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 格式化本地时间为 YYYY-MM-DD HH:mm:ss */
+  private formatTime(d: Date): string {
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
   }
 }

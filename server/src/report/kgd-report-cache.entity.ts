@@ -1,0 +1,46 @@
+import { Column, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+
+/**
+ * 报工记录本地缓存：快工单报工记录接口不返回创建时间，
+ * 本表在报工/修改成功时记录本地时间，供弹窗展示"报工时间"。
+ */
+@Entity('kgd_report_cache')
+export class KgdReportCache {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  /** 快工单报工记录ID（add 后按任务+用户反查，历史/未知时为空） */
+  @Column({ name: 'report_id', type: 'bigint', nullable: true })
+  reportId: number | null;
+
+  @Column({ name: 'bill_code', length: 64, default: '' })
+  billCode: string;
+
+  @Column({ name: 'craft_name', length: 64, default: '' })
+  craftName: string;
+
+  @Column({ name: 'report_user_id', length: 32, default: '' })
+  reportUserId: string;
+
+  @Column({ name: 'report_user_name', length: 64, default: '' })
+  reportUserName: string;
+
+  @Column({ name: 'valid_num', length: 32, default: '0' })
+  validNum: string;
+
+  @Column({ name: 'waste_num', length: 32, default: '0' })
+  wasteNum: string;
+
+  @Column({ name: 'working_minutes', type: 'int', default: 0 })
+  workingMinutes: number;
+
+  /** 报工时间（本地记录，YYYY-MM-DD HH:mm:ss） */
+  @Column({ name: 'report_time', length: 32, default: '' })
+  reportTime: string;
+
+  @Column({ name: 'remark', type: 'varchar', length: 500, nullable: true })
+  remark: string | null;
+
+  @UpdateDateColumn({ name: 'synced_at' })
+  syncedAt: Date;
+}

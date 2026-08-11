@@ -31,13 +31,16 @@
         <div class="row-top">
           <span class="seq">{{ records.length - i }}</span>
           <span class="craft-name">{{ r.craftName }}</span>
-          <span class="row-right">
-            <span class="user">{{ r.reportUser }}</span>
-            <button v-if="canEdit(r)" class="edit-btn" @click="startEdit(r)">
-              <el-icon :size="12"><EditPen /></el-icon>
-              修改
-            </button>
-          </span>
+          <button v-if="canEdit(r)" class="edit-btn" @click="startEdit(r)">
+            <el-icon :size="12"><EditPen /></el-icon>
+            修改
+          </button>
+        </div>
+
+        <!-- 副信息行：报工时间 + 报工人 -->
+        <div class="row-sub">
+          <span v-if="r.reportTime" class="report-time">{{ r.reportTime }}</span>
+          <span class="user">{{ r.reportUser }}</span>
         </div>
 
         <!-- 三列统计：良品 / 不良品 / 工时 -->
@@ -291,22 +294,14 @@ async function saveEdit() {
   font-size: 14px;
   font-weight: 600;
   color: var(--foreground);
-}
-
-.row-right {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.user {
-  font-size: 12px;
-  color: var(--muted-foreground);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .edit-btn {
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -318,10 +313,39 @@ async function saveEdit() {
   padding: 4px 10px;
   cursor: pointer;
   transition: opacity 0.15s;
+  flex-shrink: 0;
 }
 
 .edit-btn:active {
   opacity: 0.7;
+}
+
+/* ===== 副信息行：时间 + 报工人 ===== */
+.row-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 6px;
+}
+
+.report-time {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+  letter-spacing: 0.01em;
+}
+
+.report-time::after {
+  content: '·';
+  margin-left: 10px;
+  color: var(--border);
+}
+
+.user {
+  font-size: 12px;
+  color: var(--muted-foreground);
 }
 
 /* ===== 三列统计 ===== */

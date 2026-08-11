@@ -17,7 +17,7 @@ export interface AppConfig {
 }
 
 export default (): AppConfig => ({
-  port: parseInt(process.env.PORT ?? '3000', 10),
+  port: parseInt(process.env.PORT ?? '3001', 10),
   kgd: {
     baseUrl: process.env.KGD_BASE_URL ?? 'https://api.kgd.ltd',
     apiKey: process.env.KGD_API_KEY ?? '',

@@ -51,7 +51,7 @@
 | 服务 | 开发环境 | Docker 环境 |
 | --- | --- | --- |
 | 前端 | `http://localhost:5173` | `http://<服务器IP>:8080`（`WEB_PORT` 可改） |
-| 后端 API | `http://localhost:3000/api` | 容器内 3000，经 nginx `/api` 转发 |
+| 后端 API | `http://localhost:3001/api` | 容器内 3001，经 nginx `/api` 转发 |
 | MySQL | `localhost:3306` | `MYSQL_PORT`（默认 3306） |
 
 ---
@@ -98,7 +98,7 @@ npm install
 npm run dev
 ```
 
-开发环境下 Vite 已将 `/api` 代理到 `http://localhost:3000`。
+开发环境下 Vite 已将 `/api` 代理到 `http://localhost:3001`。
 
 ### 4. 访问
 
@@ -122,7 +122,7 @@ docker compose up -d --build
 
 ```
 http://<服务器IP>:8080        # 前端
-http://<服务器IP>:3000/api    # 后端 API（直连，可选）
+http://<服务器IP>:3001/api    # 后端 API（直连，可选）
 ```
 
 ### 首次启动会自动完成
@@ -148,7 +148,7 @@ docker compose up -d --build
 # 5. 查看启动日志，确认无报错
 docker compose logs -f server
 
-# 6. 防火墙放行 8080（及可选 3000）
+# 6. 防火墙放行 8080（及可选 3001）
 ```
 
 ### 更新部署
@@ -185,7 +185,7 @@ docker compose exec mysql sh -c 'mysqldump -ukgd -pkgd123456 kgd_process' > back
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `WEB_PORT` | `8080` | 前端访问端口 |
-| `SERVER_PORT` | `3000` | 后端 API 端口 |
+| `SERVER_PORT` | `3001` | 后端 API 端口 |
 | `MYSQL_PORT` | `3306` | MySQL 宿主机映射端口 |
 | `MYSQL_ROOT_PASSWORD` | `root123456` | MySQL root 密码 |
 | `MYSQL_PASSWORD` | `kgd123456` | 业务账号 `kgd` 的密码 |
@@ -205,7 +205,7 @@ docker compose exec mysql sh -c 'mysqldump -ukgd -pkgd123456 kgd_process' > back
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `PORT` | `3000` | 后端监听端口 |
+| `PORT` | `3001` | 后端监听端口 |
 | `KGD_BASE_URL` | `https://api.kgd.ltd` | 快工单 OpenAPI 基地址 |
 | `KGD_API_KEY` | — | 快工单 API Key |
 | `KGD_API_SECRET` | — | 快工单 API Secret |
