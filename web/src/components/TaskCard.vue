@@ -166,6 +166,9 @@ const menuItems = computed(() => {
     } else if (st === '已暂停') {
       list.push({ label: '继续', icon: 'VideoPlay', tone: 'primary', run: () => act('start') })
       list.push({ label: '报工', icon: 'EditPen', tone: 'primary', run: openReport })
+    } else if (st === '已完成') {
+      // 已完成工序允许撤销完工，改回进行中继续加工（如返工、数量未达标误操作等）
+      list.push({ label: '回进行中', icon: 'RefreshLeft', tone: 'warning', run: resumeFromDone })
     }
   }
   list.push({ label: '记录', icon: 'Tickets', tone: 'default', run: openRecords })
@@ -233,6 +236,22 @@ async function act(action) {
 
 function openReport() {
   emit('report', props.task)
+}
+
+/** 已完成工序撤销完工，改回进行中（可继续报工） */
+async function resumeFromDone() {
+  try {
+    await ElMessageBox.confirm(
+      `确认将加工单「${props.task.produceBillCode}」的【${props.task.craftName}】工序改回进行中？`,
+      '改回进行中',
+      { type: 'warning', confirmButtonText: '确认改回' },
+    )
+  } catch {
+    return
+  }
+  await api.post(`/tasks/${props.task.id}/start`)
+  ElMessage.success('已改回进行中')
+  emit('changed')
 }
 
 function copyCode() {

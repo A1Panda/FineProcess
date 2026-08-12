@@ -63,6 +63,33 @@ export class KgdClientService {
     return this.post<any[]>('/open_api/pub_craft/list', { pageNo: 1, pageSize: 100, ...params });
   }
 
+  /** 工序新增 */
+  addCraft(payload: Record<string, unknown>) {
+    return this.post<any[]>('/open_api/pub_craft/add', payload);
+  }
+
+  /** 工序编辑 */
+  editCraft(payload: Record<string, unknown>) {
+    return this.post<any[]>('/open_api/pub_craft/edit', payload);
+  }
+
+  // ===== 商品 =====
+
+  /** 商品列表（支持 goods_keyword / supplier_name / category_name / source / updated_at 等过滤） */
+  listGoods(params: Record<string, unknown> = {}) {
+    return this.post<any[]>('/open_api/goods/list', { pageNo: 1, pageSize: 20, ...params });
+  }
+
+  /** 商品新增 */
+  addGoods(payload: Record<string, unknown>) {
+    return this.post<any[]>('/open_api/goods/add', payload);
+  }
+
+  /** 商品编辑 */
+  editGoods(payload: Record<string, unknown>) {
+    return this.post<any[]>('/open_api/goods/edit', payload);
+  }
+
   // ===== 生产任务 =====
 
   /** 生产任务列表（按 reportable_user_name 过滤后即为"该工人的任务"） */
@@ -99,6 +126,11 @@ export class KgdClientService {
     return this.post<any[]>('/open_api/produce_bill/list', { pageNo: 1, pageSize: 50, ...params });
   }
 
+  /** 加工单新增 */
+  addProduceBill(payload: Record<string, unknown>) {
+    return this.post<any[]>('/open_api/produce_bill/add', payload);
+  }
+
   /** 加工单状态修改：1=开始 2=撤回 3=完成 4=取消 */
   editProduceBillStatus(id: number, type: 1 | 2 | 3 | 4, cancelReason?: string) {
     const payload: Record<string, unknown> = { id: String(id), type };
@@ -106,10 +138,101 @@ export class KgdClientService {
     return this.post<any[]>('/open_api/produce_bill/edit_status', payload);
   }
 
+  /** 编辑加工单（Body 结构见快工单开放接口文档：id/num/craft_list 等） */
+  editProduceBill(payload: Record<string, unknown>) {
+    return this.post<any[]>('/open_api/produce_bill/edit', payload);
+  }
+
   // ===== 用户 =====
 
   /** 用户列表 */
   listUsers(params: Record<string, unknown> = {}) {
     return this.post<any[]>('/open_api/user/list', params);
+  }
+
+  // ===== 客户 =====
+
+  /** 客户列表（支持 keyword / is_enable / updated_at 窗口过滤） */
+  listCustomers(params: Record<string, unknown> = {}) {
+    return this.post<any[]>('/open_api/customer/list', params);
+  }
+
+  /** 客户新增 */
+  addCustomer(payload: Record<string, unknown>) {
+    return this.post<any[]>('/open_api/customer/add', payload);
+  }
+
+  // ===== 供应商 =====
+
+  /** 供应商列表（支持 keyword / is_enable / updated_at 窗口过滤） */
+  listSuppliers(params: Record<string, unknown> = {}) {
+    return this.post<any[]>('/open_api/supplier/list', params);
+  }
+
+  /** 供应商新增 */
+  addSupplier(payload: Record<string, unknown>) {
+    return this.post<any[]>('/open_api/supplier/add', payload);
+  }
+
+  // ===== 其他出库单 =====
+
+  /** 其他出库单列表（支持 goods_keyword / code / 单据日期 / 制单时间窗口过滤） */
+  listElseStockOutBills(params: Record<string, unknown> = {}) {
+    return this.post<any[]>('/open_api/else_stock_out_bill/list', params);
+  }
+
+  /** 其他出库单新增 */
+  addElseStockOutBill(payload: Record<string, unknown>) {
+    return this.post<any[]>('/open_api/else_stock_out_bill/add', payload);
+  }
+
+  // ===== 其他入库单 =====
+
+  /** 其他入库单列表（支持 goods_keyword / code / 单据日期 / 制单时间窗口过滤） */
+  listElseStockInBills(params: Record<string, unknown> = {}) {
+    return this.post<any[]>('/open_api/else_stock_in_bill/list', params);
+  }
+
+  /** 其他入库单新增 */
+  addElseStockInBill(payload: Record<string, unknown>) {
+    return this.post<any[]>('/open_api/else_stock_in_bill/add', payload);
+  }
+
+  // ===== 成品入库单 =====
+
+  /** 成品入库单列表（支持 goods_keyword / code / 单据日期 / 制单时间窗口过滤） */
+  listProduceStockInBills(params: Record<string, unknown> = {}) {
+    return this.post<any[]>('/open_api/produce_stock_in_bill/list', params);
+  }
+
+  /** 成品入库单新增 */
+  addProduceStockInBill(payload: Record<string, unknown>) {
+    return this.post<any[]>('/open_api/produce_stock_in_bill/add', payload);
+  }
+
+  // ===== 合同 =====
+
+  /** 合同列表（支持 code / goods_keyword / 出库进度 / updated_at 窗口过滤） */
+  listContracts(params: Record<string, unknown> = {}) {
+    return this.post<any[]>('/open_api/customer_contract/list', params);
+  }
+
+  /** 合同新增 */
+  addContract(payload: Record<string, unknown>) {
+    return this.post<any[]>('/open_api/customer_contract/add', payload);
+  }
+
+  /** 合同修改 */
+  editContract(payload: Record<string, unknown>) {
+    return this.post<any[]>('/open_api/customer_contract/edit', payload);
+  }
+
+  // ===== 上传附件 =====
+
+  /** 上传附件（multipart/form-data），返回 { original_name, url, file_size } */
+  uploadFile(buffer: Buffer, filename: string) {
+    const form = new FormData();
+    form.append('file', new Blob([buffer as unknown as BlobPart]), filename);
+    return this.http.post('/open_api/upload/file', form).then((resp) => this.unwrap<any>(resp));
   }
 }

@@ -170,7 +170,7 @@ async function submit() {
   submitting.value = true
   try {
     const rep = reporterOptions.value.find((o) => o.kgdUserId === reporterId.value)
-    await api.post('/report', {
+    const res = await api.post('/report', {
       produceCraftId: props.task.id,
       validNum: Number(form.validNum),
       wasteNum: Number(form.wasteNum),
@@ -180,7 +180,12 @@ async function submit() {
       reportUserId: reporterId.value ?? auth.user?.kgdUserId,
       reportUserName: rep?.name ?? auth.user?.name,
     })
-    ElMessage.success('报工成功')
+    // 报工累计良品达到计划数：系统已自动将该工序标记为完成
+    if (res?.data?.autoDone) {
+      ElMessage.success('累计良品已达计划数，该工序已自动完工')
+    } else {
+      ElMessage.success('报工成功')
+    }
     visible.value = false
     emit('success')
   } catch {

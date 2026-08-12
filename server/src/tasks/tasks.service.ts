@@ -215,16 +215,20 @@ export class TasksService {
   private buildCraftProgress(chain: KgdTaskCache[]): CraftProgress[] {
     return chain.map((c) => {
       const num = Number(c.num) || 0;
-      const done = Number(c.validNum) + Number(c.wasteNum);
-      const percent = num > 0 ? Math.min(100, Math.round((done / num) * 100)) : 0;
+      const valid = Number(c.validNum) || 0;
+      const waste = Number(c.wasteNum) || 0;
+      // 累计良品达到计划数 → 显示层自动标记完成（即使快工单状态未同步，如远程拒绝自动完工）
+      const autoDone = num > 0 && valid >= num && Number(c.status) !== 3;
+      const status = autoDone ? 3 : Number(c.status);
+      const percent = num > 0 ? Math.min(100, Math.round(((valid + waste) / num) * 100)) : 0;
       return {
         craftName: c.craftName,
-        statusName: c.statusName,
-        status: Number(c.status),
+        statusName: autoDone ? '已完成' : c.statusName,
+        status,
         percent,
         num,
-        validNum: Number(c.validNum) || 0,
-        wasteNum: Number(c.wasteNum) || 0,
+        validNum: valid,
+        wasteNum: waste,
       };
     });
   }
@@ -280,11 +284,14 @@ export class TasksService {
     return started && hasReport;
   }
 
-  /** 立即同步一次快工单数据（手动刷新触发），等待完成后返回耗时 */
-  async syncNow() {
+  /** 立即同步一次快工单数据（手动刷新触发），等待完成后返回耗时。
+   *  forceFull=false（默认）：增量/活动状态同步（加工单只拉未开始+进行中，任务只拉活动状态，约 0.6s）
+   *  forceFull=true：全量同步 + 全量对账（清理远程已删除的记录，约 10-13s），用于长按刷新
+   *  reportWindowDays>0：报工记录额外覆盖最近 N 天窗口（短按刷新，完善近期被修改/漏同步的报工） */
+  async syncNow(forceFull = false, reportWindowDays = 0) {
     const start = Date.now();
-    await this.sync.requestSync();
-    return { ok: true, duration: Date.now() - start };
+    await this.sync.requestSync(forceFull, reportWindowDays);
+    return { ok: true, full: forceFull, duration: Date.now() - start };
   }
 
   /** 首页统计：各状态数量 / 各工序未完成数量 / 编程未开始加工单数（与任务列表口径一致，排除被锁定的后序工序） */

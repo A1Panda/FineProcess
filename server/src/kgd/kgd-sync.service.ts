@@ -15,7 +15,14 @@ const PAGE_SIZE = 100;
 const CONCURRENCY = 6; // 分页并发数：实测串行 41 页 28s，并发 6 约 5s，并发 8 约 4s
 const SYNC_INTERVAL = 5 * 60 * 1000; // 每 5 分钟滚动同步一次
 const REPORT_OVERLAP_SEC = 60; // 报工增量窗口与上次游标重叠秒数，防止边界漏数据
-const REPORT_FULL_RECONCILE_SEC = 30 * 60; // 报工全量对账间隔：定期清理本地已存在但远程已删除的记录
+const REPORT_FULL_RECONCILE_SEC = 24 * 60 * 60; // 报工全量对账间隔：每天一次清理本地已存在但远程已删除的记录（需即时全量时用长按刷新按钮）
+const REPORT_RECENT_DAYS = 3; // 手动刷新（短按增量）时报工覆盖最近天数：完善近期被修改/漏同步的报工记录
+const BILL_FULL_RECONCILE_SEC = 24 * 60 * 60; // 加工单全量对账间隔：每天一次（长按刷新可强制触发）
+const TASK_FULL_RECONCILE_SEC = 24 * 60 * 60; // 任务全量对账间隔：每天一次（长按刷新可强制触发）
+/** 滚动同步只拉活动状态（已完成/已取消的历史数据由全量对账刷新）：加工单 未开始(1)+生产中(2) */
+const BILL_ACTIVE_STATUSES = [1, 2];
+/** 任务活动状态：未开始(1)+进行中(2)+已暂停(4) */
+const TASK_ACTIVE_STATUSES = [1, 2, 4];
 
 /** 格式化为 'YYYY-MM-DD HH:mm:ss'（快工单 report_time 过滤精确到秒） */
 function fmtDateTime(d: Date): string {
@@ -27,6 +34,13 @@ function fmtDateTime(d: Date): string {
 function minusSeconds(s: string, sec: number): string {
   const d = new Date(`${s.replace(' ', 'T')}`);
   d.setSeconds(d.getSeconds() - sec);
+  return fmtDateTime(d);
+}
+
+/** 将 'YYYY-MM-DD HH:mm:ss' 向前回退 n 天 */
+function minusDays(s: string, days: number): string {
+  const d = new Date(`${s.replace(' ', 'T')}`);
+  d.setDate(d.getDate() - days);
   return fmtDateTime(d);
 }
 
@@ -72,21 +86,21 @@ export class KgdSyncService implements OnModuleInit {
   }
 
   @Interval(SYNC_INTERVAL)
-  syncNow(): Promise<void> {
+  syncNow(forceFull = false, reportWindowDays = 0): Promise<void> {
     if (this.currentSync) return this.currentSync;
-    this.currentSync = this.doSync().finally(() => {
+    this.currentSync = this.doSync(forceFull, reportWindowDays).finally(() => {
       this.currentSync = null;
     });
     return this.currentSync;
   }
 
-  private async doSync() {
+  private async doSync(forceFull = false, reportWindowDays = 0) {
     const start = Date.now();
     try {
       await Promise.all([
-        this.syncBills(),
-        this.syncTasks(),
-        this.syncReportRecords(),
+        this.syncBills(forceFull),
+        this.syncTasks(forceFull),
+        this.syncReportRecords(forceFull, reportWindowDays),
         this.syncUsers(),
       ]);
       this.logger.log(`数据同步完成，耗时 ${Date.now() - start}ms`);
@@ -129,149 +143,197 @@ export class KgdSyncService implements OnModuleInit {
     this.logger.log(`用户同步完成：新增 ${created}，更新岗位 ${updated}，耗时 ${Date.now() - start}ms`);
   }
 
-  /** 加工单滚动同步（同步完成后清理远程已删除的记录） */
-  private async syncBills() {
+  /**
+   * 加工单滚动同步：活动状态（未开始+生产中）增量为主 + 定期全量对账
+   * - 增量：只拉 BILL_ACTIVE_STATUSES 状态，请求量从 40+ 页降到 2 页，毫秒级完成
+   * - 全量对账：首次 / 距上次对账超过 BILL_FULL_RECONCILE_SEC / 手动刷新强制时执行，拉全量并清理远程已删除记录、刷新已完成/已取消历史
+   */
+  private async syncBills(forceFull = false) {
     const start = Date.now();
-    const fetchedIds: number[] = [];
-    const first = await this.kgdClient.listProduceBills({ pageNo: 1, pageSize: PAGE_SIZE });
-    const firstList = first.data ?? [];
-    const total = Math.min(first.count ?? firstList.length, 5000);
+    const now = fmtDateTime(new Date());
+    const lastFull = (await this.syncMeta.findOneBy({ key: 'bill_full_sync_at' }))?.value || null;
+    const fullDue = forceFull || !lastFull || lastFull < minusSeconds(now, BILL_FULL_RECONCILE_SEC);
+
+    if (fullDue) {
+      const { all, total } = await this.fetchBills();
+      await this.upsertBills(all);
+      // 全量未截断时才清理本地已删除记录，避免误删
+      if (total < 10_000 && all.length) {
+        const ids = all.map((b: any) => b.id).filter((id: any) => id != null);
+        const del = await this.bills
+          .createQueryBuilder()
+          .delete()
+          .where('billId NOT IN (:...ids)', { ids })
+          .execute();
+        if (del.affected) this.logger.log(`加工单缓存清理完成：删除本地已失效 ${del.affected} 条`);
+      }
+      await this.syncMeta.upsert({ key: 'bill_full_sync_at', value: now }, ['key']);
+      this.logger.log(`加工单同步完成(全量对账)：${all.length} 条，耗时 ${Date.now() - start}ms`);
+      return;
+    }
+
     let done = 0;
+    for (const st of BILL_ACTIVE_STATUSES) {
+      const { all } = await this.fetchBills(st);
+      await this.upsertBills(all);
+      done += all.length;
+    }
+    this.logger.log(`加工单同步完成(活动)：${done} 条，耗时 ${Date.now() - start}ms`);
+  }
 
-    const upsertPage = async (list: any[]) => {
-      if (!list.length) return;
-      const rows = list.map((b: any) => {
-        fetchedIds.push(b.id);
-        return {
-          billId: b.id,
-          code: b.code ?? '',
-          htNo: extractFieldValue(b.fieldValueList, 'HT图号'),
-          goodsName: b.goods?.name ?? '',
-          goodsSpec: b.goods?.standard ?? '',
-          num: Number(b.num ?? 0),
-          unitName: b.goods?.unit?.name ?? 'PCS',
-          status: Number(b.status ?? 0),
-          statusName: b.status_name ?? '',
-          planStart: b.start_produce_date ?? null,
-          planEnd: b.end_produce_date ?? null,
-          deliveryDate: b.delivery_date ?? null,
-        };
-      });
-      await this.bills.upsert(rows, ['billId']);
-      done += list.length;
-    };
-
-    await upsertPage(firstList);
-    // 并发拉取剩余页（实测并发能大幅缩短总耗时，接口可承受）
+  /** 分页拉取加工单（status 为空即全量），并发拉取剩余页 */
+  private async fetchBills(status?: number): Promise<{ all: any[]; total: number }> {
+    const params = status !== undefined ? { status } : {};
+    const first = await this.kgdClient.listProduceBills({ pageNo: 1, pageSize: PAGE_SIZE, ...params });
+    const firstList = first.data ?? [];
+    const total = Math.min(first.count ?? firstList.length, 10_000);
+    const all = [...firstList];
     const pageCount = Math.ceil(total / PAGE_SIZE);
     let next = 2;
     const worker = async () => {
       while (next <= pageCount) {
         const pageNo = next++;
-        const { data } = await this.kgdClient.listProduceBills({ pageNo, pageSize: PAGE_SIZE });
-        await upsertPage(data ?? []);
+        const { data } = await this.kgdClient.listProduceBills({ pageNo, pageSize: PAGE_SIZE, ...params });
+        all.push(...(data ?? []));
       }
     };
     await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-
-    // 全量拉取成功时，清理本地存在但远程已删除的记录
-    if (done >= total && fetchedIds.length) {
-      await this.bills
-        .createQueryBuilder()
-        .delete()
-        .where('billId NOT IN (:...ids)', { ids: fetchedIds })
-        .execute();
-      this.logger.log(`加工单缓存清理完成：本地 ${fetchedIds.length} 条为准`);
-    }
-    this.logger.log(`加工单同步完成：${done} 条，耗时 ${Date.now() - start}ms`);
+    return { all, total };
   }
 
-  /** 生产任务滚动同步（同步完成后清理远程已删除的记录） */
-  private async syncTasks() {
+  private async upsertBills(all: any[]) {
+    if (!all.length) return;
+    const rows = all.map((b: any) => ({
+      billId: b.id,
+      code: b.code ?? '',
+      htNo: extractFieldValue(b.fieldValueList, 'HT图号'),
+      goodsName: b.goods?.name ?? '',
+      goodsSpec: b.goods?.standard ?? '',
+      num: Number(b.num ?? 0),
+      unitName: b.goods?.unit?.name ?? 'PCS',
+      status: Number(b.status ?? 0),
+      statusName: b.status_name ?? '',
+      planStart: b.start_produce_date ?? null,
+      planEnd: b.end_produce_date ?? null,
+      deliveryDate: b.delivery_date ?? null,
+    }));
+    await this.bills.upsert(rows, ['billId']);
+  }
+
+  /**
+   * 生产任务滚动同步：活动状态（未开始+进行中+已暂停）增量为主 + 定期全量对账
+   * - 增量：只拉 TASK_ACTIVE_STATUSES 状态，请求量从 40+ 页降到 3 页
+   * - 全量对账：首次 / 距上次对账超过 TASK_FULL_RECONCILE_SEC / 手动刷新强制时执行，拉全量并清理远程已删除记录、刷新已完成历史
+   */
+  private async syncTasks(forceFull = false) {
     const start = Date.now();
-    const fetchedIds: number[] = [];
-    const first = await this.kgdClient.listTasks({ pageNo: 1, pageSize: PAGE_SIZE });
-    const firstList = first.data ?? [];
-    const total = Math.min(first.count ?? firstList.length, 5000);
+    const now = fmtDateTime(new Date());
+    const lastFull = (await this.syncMeta.findOneBy({ key: 'task_full_sync_at' }))?.value || null;
+    const fullDue = forceFull || !lastFull || lastFull < minusSeconds(now, TASK_FULL_RECONCILE_SEC);
+
+    if (fullDue) {
+      const { all, total } = await this.fetchTasks();
+      await this.upsertTasks(all);
+      // 全量未截断时才清理本地已删除记录，避免误删
+      if (total < 10_000 && all.length) {
+        const ids = all.map((t: any) => t.id).filter((id: any) => id != null);
+        const del = await this.tasks
+          .createQueryBuilder()
+          .delete()
+          .where('taskId NOT IN (:...ids)', { ids })
+          .execute();
+        if (del.affected) this.logger.log(`任务缓存清理完成：删除本地已失效 ${del.affected} 条`);
+      }
+      await this.syncMeta.upsert({ key: 'task_full_sync_at', value: now }, ['key']);
+      this.logger.log(`任务同步完成(全量对账)：${all.length} 条，耗时 ${Date.now() - start}ms`);
+      return;
+    }
+
     let done = 0;
+    for (const st of TASK_ACTIVE_STATUSES) {
+      const { all } = await this.fetchTasks(st);
+      await this.upsertTasks(all);
+      done += all.length;
+    }
+    this.logger.log(`任务同步完成(活动)：${done} 条，耗时 ${Date.now() - start}ms`);
+  }
 
-    const upsertPage = async (list: any[]) => {
-      if (!list.length) return;
-      const rows = list.map((t: any) => {
-        fetchedIds.push(t.id);
-        return {
-          taskId: t.id,
-          billId: t.produce_bill?.id ?? 0,
-          billCode: t.produce_bill?.code ?? '',
-          htNo: extractFieldValue(t.fieldValueList, 'HT图号'),
-          craftName: t.pub_craft?.name ?? '',
-          craftCode: t.pub_craft?.code ?? null,
-          goodsName: t.produce_bill?.goods?.name ?? '',
-          goodsCode: t.produce_bill?.goods?.code ?? null,
-          goodsSpec: t.produce_bill?.goods?.standard ?? '',
-          num: t.num ?? '0',
-          validNum: t.valid_num ?? '0',
-          wasteNum: t.waste_num ?? '0',
-          status: TASK_STATUS_MAP[t.status_name ?? ''] ?? 0,
-          statusName: t.status_name ?? '',
-          endTime: t.end_time ?? null,
-          reportableUserNames: t.reportable_user_names ?? null,
-          unitName: t.unit?.name ?? '',
-          workshopPathNames: t.workshop_path_names ?? '',
-          produceLineNames: t.produce_line_names ?? '',
-        };
-      });
-      await this.tasks.upsert(rows, ['taskId']);
-      done += list.length;
-    };
-
-    await upsertPage(firstList);
-    // 并发拉取剩余页
+  /** 分页拉取生产任务（status 为空即全量），并发拉取剩余页 */
+  private async fetchTasks(status?: number): Promise<{ all: any[]; total: number }> {
+    const params = status !== undefined ? { status } : {};
+    const first = await this.kgdClient.listTasks({ pageNo: 1, pageSize: PAGE_SIZE, ...params });
+    const firstList = first.data ?? [];
+    const total = Math.min(first.count ?? firstList.length, 10_000);
+    const all = [...firstList];
     const pageCount = Math.ceil(total / PAGE_SIZE);
     let next = 2;
     const worker = async () => {
       while (next <= pageCount) {
         const pageNo = next++;
-        const { data } = await this.kgdClient.listTasks({ pageNo, pageSize: PAGE_SIZE });
-        await upsertPage(data ?? []);
+        const { data } = await this.kgdClient.listTasks({ pageNo, pageSize: PAGE_SIZE, ...params });
+        all.push(...(data ?? []));
       }
     };
     await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-
-    // 全量拉取成功时，清理本地存在但远程已删除的记录
-    if (done >= total && fetchedIds.length) {
-      await this.tasks
-        .createQueryBuilder()
-        .delete()
-        .where('taskId NOT IN (:...ids)', { ids: fetchedIds })
-        .execute();
-      this.logger.log(`任务缓存清理完成：本地 ${fetchedIds.length} 条为准`);
-    }
-    this.logger.log(`任务同步完成：${done} 条，耗时 ${Date.now() - start}ms`);
+    return { all, total };
   }
 
-  /** 触发一次即时同步（写操作后 / 手动刷新时调用，可等待完成） */
-  requestSync(): Promise<void> {
-    return this.syncNow();
+  private async upsertTasks(all: any[]) {
+    if (!all.length) return;
+    const rows = all.map((t: any) => ({
+      taskId: t.id,
+      billId: t.produce_bill?.id ?? 0,
+      billCode: t.produce_bill?.code ?? '',
+      htNo: extractFieldValue(t.fieldValueList, 'HT图号'),
+      craftName: t.pub_craft?.name ?? '',
+      craftCode: t.pub_craft?.code ?? null,
+      goodsName: t.produce_bill?.goods?.name ?? '',
+      goodsCode: t.produce_bill?.goods?.code ?? null,
+      goodsSpec: t.produce_bill?.goods?.standard ?? '',
+      num: t.num ?? '0',
+      validNum: t.valid_num ?? '0',
+      wasteNum: t.waste_num ?? '0',
+      status: TASK_STATUS_MAP[t.status_name ?? ''] ?? 0,
+      statusName: t.status_name ?? '',
+      endTime: t.end_time ?? null,
+      reportableUserNames: t.reportable_user_names ?? null,
+      unitName: t.unit?.name ?? '',
+      workshopPathNames: t.workshop_path_names ?? '',
+      produceLineNames: t.produce_line_names ?? '',
+    }));
+    await this.tasks.upsert(rows, ['taskId']);
+  }
+
+  /** 触发一次即时同步（写操作后 / 手动刷新时调用，可等待完成）。
+   *  forceFull=true 强制全量对账；reportWindowDays>0 时报工记录改为覆盖最近 N 天窗口（手动刷新短按） */
+  requestSync(forceFull = false, reportWindowDays = 0): Promise<void> {
+    return this.syncNow(forceFull, reportWindowDays);
   }
 
   /**
    * 报工记录同步：增量为主 + 定期全量对账
-   * - 增量：以 kgd_sync_meta.report_last_sync 为游标，仅拉 [游标-60s, 当前时间] 窗口，省 OpenAPI 配额
-   * - 全量对账：首次或距上次对账超过 REPORT_FULL_RECONCILE_SEC 时执行，全量拉取并清理本地已存在但远程已删除的记录
+   * - 增量：以 kgd_sync_meta.report_last_sync 为游标，仅拉 [游标-60s, 当前时间] 窗口，省 OpenAPI 配额（定时轮询）
+   * - 近 N 天：手动刷新短按时覆盖 [当前-N天, 当前] 窗口，完善近期被修改 / 漏同步的报工记录
+   * - 全量对账：首次 / 距上次对账超过 REPORT_FULL_RECONCILE_SEC / 手动刷新长按强制时执行，全量拉取并清理本地已存在但远程已删除的记录
    * - 本地已有（reportId 匹配）→ 更新业务字段；不写入 reportTime，避免覆盖本地报工时间
    * - 本地 reportId 为空的行按 加工单+工序+用户+数量 匹配补全 ID 再更新
    */
-  private async syncReportRecords() {
+  private async syncReportRecords(forceFull = false, reportWindowDays = 0) {
     const start = Date.now();
     const now = fmtDateTime(new Date());
     const lastSync = (await this.syncMeta.findOneBy({ key: 'report_last_sync' }))?.value || null;
     const lastFull = (await this.syncMeta.findOneBy({ key: 'report_full_sync_at' }))?.value || null;
-    const fullDue = !lastSync || !lastFull || lastFull < minusSeconds(now, REPORT_FULL_RECONCILE_SEC);
+    const fullDue = forceFull || !lastSync || !lastFull || lastFull < minusSeconds(now, REPORT_FULL_RECONCILE_SEC);
 
     if (fullDue) {
       await this.fullSyncReportRecords(now);
       this.logger.log(`报工记录同步完成(全量对账)：耗时 ${Date.now() - start}ms`);
+      return;
+    }
+    if (reportWindowDays > 0) {
+      const from = minusDays(now, reportWindowDays);
+      await this.incrementalSyncReportRecords(now, from, true);
+      this.logger.log(`报工记录同步完成(近${reportWindowDays}天)：窗口 [${minusSeconds(from, REPORT_OVERLAP_SEC)}, ${now}]，耗时 ${Date.now() - start}ms`);
       return;
     }
     await this.incrementalSyncReportRecords(now, lastSync!);
@@ -300,14 +362,33 @@ export class KgdSyncService implements OnModuleInit {
     await this.syncMeta.upsert({ key: 'report_full_sync_at', value: now }, ['key']);
   }
 
-  /** 增量拉取 [游标-重叠, now] + upsert + 推进游标 */
-  private async incrementalSyncReportRecords(now: string, lastSync: string) {
-    const { all } = await this.fetchReportRecords({
-      report_time_start: minusSeconds(lastSync, REPORT_OVERLAP_SEC),
+  /** 按 [from, now] 窗口拉取 + upsert + 推进游标（from 为游标或近 N 天起点）
+   *  cleanupWindow=true（手动短按近N天刷新）时额外做删除对账：
+   *  清理本地 reportId 非空、报工时间在窗口内、但远程已不存在的记录（如快工单被手动删除的记录） */
+  private async incrementalSyncReportRecords(now: string, from: string, cleanupWindow = false) {
+    const { all, total } = await this.fetchReportRecords({
+      report_time_start: minusSeconds(from, REPORT_OVERLAP_SEC),
       report_time_end: now,
     });
     await this.backfillNullReportIds(all);
     await this.upsertReportRows(all);
+    if (cleanupWindow && total < 10_000) {
+      const ids = all.map((r: any) => r.id).filter((id: any) => id != null);
+      if (ids.length) {
+        // 清理本地已失效记录：reportId 非空但本次窗口未拉到。
+        // report_time 为空的记录（纯同步 upsert 进来的，无本地报工时间）也纳入清理，
+        // 否则"快工单已删除的记录"在短按刷新时无法同步消失。
+        const del = await this.reportCache
+          .createQueryBuilder()
+          .delete()
+          .where(
+            "(report_time >= :from OR report_time = '' OR report_time IS NULL) AND report_id IS NOT NULL AND report_id NOT IN (:...ids)",
+            { from: from + '', ids },
+          )
+          .execute();
+        if (del.affected) this.logger.log(`报工增量对账完成：删除本地已失效 ${del.affected} 条`);
+      }
+    }
     await this.syncMeta.upsert({ key: 'report_last_sync', value: now }, ['key']);
   }
 

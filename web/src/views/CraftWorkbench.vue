@@ -10,7 +10,7 @@
           <div class="craft-name">{{ craftName }}工序</div>
           <div class="sub">{{ subtitle }}</div>
         </div>
-        <el-button circle plain class="round-btn" aria-label="刷新数据" :class="{ spinning: refreshing }" @click="manualRefresh">
+        <el-button circle plain class="round-btn" aria-label="刷新数据（短按增量同步，长按全量同步）" :class="{ spinning: refreshing }" @pointerdown="onRefreshPress" @contextmenu.prevent>
           <el-icon :size="20"><Refresh /></el-icon>
         </el-button>
       </div>
@@ -137,7 +137,7 @@
 
       <!-- 移动端浮动刷新 -->
       <footer class="floating-refresh">
-        <button class="refresh-pill" :disabled="refreshing" @click="manualRefresh">
+        <button class="refresh-pill" :disabled="refreshing" @pointerdown="onRefreshPress" @contextmenu.prevent>
           <el-icon :size="18"><Refresh /></el-icon>
           {{ refreshing ? '同步中…' : '刷新数据' }}
         </button>
@@ -324,17 +324,42 @@ function onSearchInput() {
   }, 300)
 }
 
-/** 手动刷新：先立即同步快工单数据，再加载缓存 */
-async function manualRefresh() {
+/** 手动刷新：短按=增量同步（默认，约 0.6s），报工记录额外覆盖最近 3 天（完善近期被修改/漏同步的报工）；
+ *  长按(≥600ms)=全量同步（约 10-13s），全量会清理远程已删除的记录 */
+async function manualRefresh(full = false) {
+  if (refreshing.value) return
   refreshing.value = true
   try {
-    await api.post('/tasks/sync', null, { timeout: 60000 })
-    ElMessage.success('数据已同步')
+    await api.post('/tasks/sync', null, {
+      params: full ? { full: 1 } : { days: 3 },
+      timeout: full ? 120000 : 60000,
+    })
+    ElMessage.success(full ? '全量同步完成' : '数据已同步')
   } catch {
     ElMessage.warning('数据同步失败，显示缓存数据')
   }
   refreshing.value = false
   await load()
+}
+
+/** 长按(≥600ms)触发全量同步；未满 600ms 松开则按短按增量同步 */
+const LONG_PRESS_MS = 600
+function onRefreshPress(e) {
+  if (refreshing.value || e.button !== 0) return
+  const el = e.currentTarget
+  let longTriggered = false
+  const timer = setTimeout(() => {
+    longTriggered = true
+    manualRefresh(true)
+  }, LONG_PRESS_MS)
+  const release = () => {
+    clearTimeout(timer)
+    if (!longTriggered) manualRefresh(false)
+  }
+  const cancel = () => clearTimeout(timer)
+  el.addEventListener('pointerup', release, { once: true })
+  el.addEventListener('pointerleave', cancel, { once: true })
+  el.addEventListener('pointercancel', cancel, { once: true })
 }
 
 function openReport(task) {

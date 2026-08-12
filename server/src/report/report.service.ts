@@ -81,13 +81,15 @@ export class ReportService {
     // 记录本地报工时间（快工单报工接口不返回创建时间，用于弹窗展示）
     await this.recordLocalReport({ kgdUserId: uid, name: uname } as JwtPayload, dto, result.data);
     // 报工成功后直接更新本地缓存，前端 reload 立即看到最新良品/不良品数（无需等同步）
-    await this.updateTaskCacheAfterReport(dto);
+    const { autoDone } = await this.updateTaskCacheAfterReport(dto);
     // 后台同步，用快工单真实数据校准缓存
     this.sync.requestSync();
     return {
       success: true,
       data: result.data,
       reportedAt: new Date().toISOString(),
+      /** 本次报工后累计良品达到计划数，已自动标记该工序完成 */
+      autoDone,
     };
   }
 
@@ -138,7 +140,7 @@ export class ReportService {
     };
   }
 
-  /** 按加工单重新汇总各工序报工数，覆盖本地任务缓存 */
+  /** 按加工单重新汇总各工序报工数，覆盖本地任务缓存；累计良品达到计划数时自动完工 */
   private async recalcBillCache(billCode: string) {
     const { data } = await this.kgdClient.listReportRecords({
       pageNo: 1,
@@ -158,23 +160,46 @@ export class ReportService {
       }
       task.validNum = String(valid);
       task.wasteNum = String(waste);
+      const num = Number(task.num) || 0;
+      if (num > 0 && valid >= num && Number(task.status) !== 3) {
+        task.status = 3;
+        task.statusName = '已完成';
+        try {
+          await this.kgdClient.editTaskStatus(task.taskId, 3);
+        } catch {
+          // 快工单拒绝时仅本地标记，后台同步会用快工单真实状态校准
+        }
+      }
     }
     if (tasks.length) await this.taskCache.save(tasks);
   }
 
-  /** 本地缓存立即累加本次报工数量；勾选完工时任务标记为已完成 */
-  private async updateTaskCacheAfterReport(dto: ReportWorkDto) {
+  /**
+   * 本地缓存立即累加本次报工数量；勾选完工时任务标记为已完成；
+   * 累计良品达到计划数时自动完工（无需手动点"完工"）
+   */
+  private async updateTaskCacheAfterReport(dto: ReportWorkDto): Promise<{ autoDone: boolean }> {
     const task = await this.taskCache.findOneBy({ taskId: dto.produceCraftId });
-    if (!task) return;
+    if (!task) return { autoDone: false };
     const valid = Math.max(0, Number(dto.validNum) || 0);
     const waste = Math.max(0, Number(dto.wasteNum) || 0);
     task.validNum = String((Number(task.validNum) || 0) + valid);
     task.wasteNum = String((Number(task.wasteNum) || 0) + waste);
-    if (dto.isFinish) {
+    const num = Number(task.num) || 0;
+    const autoDone = num > 0 && Number(task.validNum) >= num && Number(task.status) !== 3;
+    if (dto.isFinish || autoDone) {
       task.status = 3;
       task.statusName = '已完成';
+      if (autoDone) {
+        try {
+          await this.kgdClient.editTaskStatus(task.taskId, 3);
+        } catch {
+          // 快工单拒绝时仅本地标记，后台同步会用快工单真实状态校准
+        }
+      }
     }
     await this.taskCache.save(task);
+    return { autoDone };
   }
 
   /** 当前工人的报工记录 */

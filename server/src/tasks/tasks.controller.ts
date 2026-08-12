@@ -46,10 +46,13 @@ export class TasksController {
     return this.tasks.getSummary(user);
   }
 
-  /** 手动触发一次数据同步（刷新按钮调用），等待完成后返回耗时 */
+  /** 手动触发一次数据同步（刷新按钮调用），等待完成后返回耗时。
+   *  ?full=1 时强制全量同步（长按刷新）；
+   *  ?days=N 时报工记录额外覆盖最近 N 天窗口（短按刷新默认 days=3，完善近期被修改/漏同步的报工） */
   @Post('sync')
-  syncNow() {
-    return this.tasks.syncNow();
+  syncNow(@Query('full') full?: string, @Query('days') days?: string) {
+    const reportWindowDays = days !== undefined ? Math.max(0, Number(days) || 0) : 0;
+    return this.tasks.syncNow(full === '1' || full === 'true', reportWindowDays);
   }
 
   /** 开工 */
