@@ -27,6 +27,13 @@ export class AuthController {
     return this.auth.listUsersLocal();
   }
 
+  /** 报工人候选：外部人员名单（含当日编码）合并快工单用户映射 */
+  @UseGuards(JwtAuthGuard)
+  @Get('reporters')
+  listReporters() {
+    return this.auth.listExternalReporters();
+  }
+
   /** 从快工单同步用户（管理操作） */
   @UseGuards(JwtAuthGuard)
   @Post('sync-users')

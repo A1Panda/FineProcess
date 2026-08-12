@@ -14,6 +14,8 @@ export interface AppConfig {
     database: string;
   };
   jwtSecret: string;
+  /** 外部人员每日编码服务器（编码考勤系统） */
+  externalEmployeeApi: string;
 }
 
 export default (): AppConfig => ({
@@ -32,4 +34,5 @@ export default (): AppConfig => ({
     database: process.env.DB_DATABASE ?? 'kgd_process',
   },
   jwtSecret: process.env.JWT_SECRET ?? 'kgd-process-secret',
+  externalEmployeeApi: process.env.EXTERNAL_EMPLOYEE_API ?? 'http://192.168.110.100:3100',
 });

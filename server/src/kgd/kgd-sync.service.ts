@@ -9,10 +9,26 @@ import { KgdBillCache } from './kgd-bill-cache.entity';
 import { KgdTaskCache } from './kgd-task-cache.entity';
 import { KgdReportCache } from '../report/kgd-report-cache.entity';
 import { User } from '../auth/users.entity';
+import { KgdSyncMeta } from './kgd-sync-meta.entity';
 
 const PAGE_SIZE = 100;
 const CONCURRENCY = 6; // 分页并发数：实测串行 41 页 28s，并发 6 约 5s，并发 8 约 4s
 const SYNC_INTERVAL = 5 * 60 * 1000; // 每 5 分钟滚动同步一次
+const REPORT_OVERLAP_SEC = 60; // 报工增量窗口与上次游标重叠秒数，防止边界漏数据
+const REPORT_FULL_RECONCILE_SEC = 30 * 60; // 报工全量对账间隔：定期清理本地已存在但远程已删除的记录
+
+/** 格式化为 'YYYY-MM-DD HH:mm:ss'（快工单 report_time 过滤精确到秒） */
+function fmtDateTime(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/** 将 'YYYY-MM-DD HH:mm:ss' 向前回退 n 秒 */
+function minusSeconds(s: string, sec: number): string {
+  const d = new Date(`${s.replace(' ', 'T')}`);
+  d.setSeconds(d.getSeconds() - sec);
+  return fmtDateTime(d);
+}
 
 /** 任务状态码：1=未开始 2=进行中 3=已完成 4=暂停/取消（接口只返回 status_name 字符串） */
 const TASK_STATUS_MAP: Record<string, number> = {
@@ -47,6 +63,7 @@ export class KgdSyncService implements OnModuleInit {
     @InjectRepository(KgdTaskCache) private readonly tasks: Repository<KgdTaskCache>,
     @InjectRepository(KgdReportCache) private readonly reportCache: Repository<KgdReportCache>,
     @InjectRepository(User) private readonly users: Repository<User>,
+    @InjectRepository(KgdSyncMeta) private readonly syncMeta: Repository<KgdSyncMeta>,
   ) {}
 
   onModuleInit() {
@@ -74,7 +91,7 @@ export class KgdSyncService implements OnModuleInit {
       ]);
       this.logger.log(`数据同步完成，耗时 ${Date.now() - start}ms`);
     } catch (e) {
-      this.logger.warn(`数据同步失败: ${(e as Error).message}`);
+      this.logger.warn(`数据同步失败: ${(e as Error).message}\n${(e as Error).stack}`);
     }
   }
 
@@ -239,46 +256,102 @@ export class KgdSyncService implements OnModuleInit {
   }
 
   /**
-   * 报工记录滚动同步：分页拉取快工单全部报工记录缓存到本地
+   * 报工记录同步：增量为主 + 定期全量对账
+   * - 增量：以 kgd_sync_meta.report_last_sync 为游标，仅拉 [游标-60s, 当前时间] 窗口，省 OpenAPI 配额
+   * - 全量对账：首次或距上次对账超过 REPORT_FULL_RECONCILE_SEC 时执行，全量拉取并清理本地已存在但远程已删除的记录
    * - 本地已有（reportId 匹配）→ 更新业务字段；不写入 reportTime，避免覆盖本地报工时间
-   * - 本地 reportId 为空的行先按 加工单+工序+用户+数量 匹配补全 ID 再更新
-   * - 不做远程删除清理：报工记录删除罕见，且本地报工时间需保留
+   * - 本地 reportId 为空的行按 加工单+工序+用户+数量 匹配补全 ID 再更新
    */
   private async syncReportRecords() {
     const start = Date.now();
-    const first = await this.kgdClient.listReportRecords({ pageNo: 1, pageSize: PAGE_SIZE });
-    const all: any[] = [...(first.data ?? [])];
-    const total = Math.min(first.count ?? all.length, 10_000);
+    const now = fmtDateTime(new Date());
+    const lastSync = (await this.syncMeta.findOneBy({ key: 'report_last_sync' }))?.value || null;
+    const lastFull = (await this.syncMeta.findOneBy({ key: 'report_full_sync_at' }))?.value || null;
+    const fullDue = !lastSync || !lastFull || lastFull < minusSeconds(now, REPORT_FULL_RECONCILE_SEC);
 
+    if (fullDue) {
+      await this.fullSyncReportRecords(now);
+      this.logger.log(`报工记录同步完成(全量对账)：耗时 ${Date.now() - start}ms`);
+      return;
+    }
+    await this.incrementalSyncReportRecords(now, lastSync!);
+    this.logger.log(`报工记录同步完成(增量)：窗口 [${minusSeconds(lastSync!, REPORT_OVERLAP_SEC)}, ${now}]，耗时 ${Date.now() - start}ms`);
+  }
+
+  /** 全量拉取 + upsert + 清理远程已删除记录 + 推进游标 */
+  private async fullSyncReportRecords(now: string) {
+    const { all, total } = await this.fetchReportRecords({});
+    await this.backfillNullReportIds(all);
+    await this.upsertReportRows(all);
+    // 清理：本地 reportId 非空但远程已删除的记录（仅在全量未截断时执行，避免误删）
+    if (total < 10_000) {
+      const ids = all.map((r: any) => r.id).filter((id: any) => id != null);
+      if (ids.length) {
+        const del = await this.reportCache
+          .createQueryBuilder()
+          .delete()
+          .where('report_id IS NOT NULL AND report_id NOT IN (:...ids)', { ids })
+          .execute();
+        if (del.affected) this.logger.log(`报工缓存清理完成：删除本地已失效 ${del.affected} 条`);
+      }
+    }
+    // 同步成功后才推进游标（失败保持原游标，下次继续对账）
+    await this.syncMeta.upsert({ key: 'report_last_sync', value: now }, ['key']);
+    await this.syncMeta.upsert({ key: 'report_full_sync_at', value: now }, ['key']);
+  }
+
+  /** 增量拉取 [游标-重叠, now] + upsert + 推进游标 */
+  private async incrementalSyncReportRecords(now: string, lastSync: string) {
+    const { all } = await this.fetchReportRecords({
+      report_time_start: minusSeconds(lastSync, REPORT_OVERLAP_SEC),
+      report_time_end: now,
+    });
+    await this.backfillNullReportIds(all);
+    await this.upsertReportRows(all);
+    await this.syncMeta.upsert({ key: 'report_last_sync', value: now }, ['key']);
+  }
+
+  /** 分页拉取报工记录（params 为空即全量） */
+  private async fetchReportRecords(params: Record<string, unknown>) {
+    const all: any[] = [];
+    const query = { pageNo: 1, pageSize: PAGE_SIZE, ...params };
+    const first = await this.kgdClient.listReportRecords(query);
+    all.push(...(first.data ?? []));
+    const total = Math.min(first.count ?? all.length, 10_000);
     const pageCount = Math.ceil(total / PAGE_SIZE);
     let next = 2;
     const worker = async () => {
       while (next <= pageCount) {
         const pageNo = next++;
-        const { data } = await this.kgdClient.listReportRecords({ pageNo, pageSize: PAGE_SIZE });
+        const { data } = await this.kgdClient.listReportRecords({ ...query, pageNo, pageSize: PAGE_SIZE });
         if (data?.length) all.push(...data);
       }
     };
     await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    return { all, total };
+  }
 
-    // 补全本地 reportId 为空的记录（报工后即时写入、反查失败的兜底）
+  /** 补全本地 reportId 为空的记录（报工后即时写入、反查失败的兜底） */
+  private async backfillNullReportIds(all: any[]) {
     const nullRows = await this.reportCache.find({ where: { reportId: IsNull() } });
-    if (nullRows.length) {
-      for (const nr of nullRows) {
-        const hit = all.find(
-          (r: any) =>
-            (r.produce_bill?.code ?? '') === nr.billCode &&
-            (r.pub_craft?.name ?? '') === nr.craftName &&
-            String(r.report_user_id ?? '') === String(nr.reportUserId) &&
-            String(r.valid_num ?? '0') === String(nr.validNum) &&
-            String(r.waste_num ?? '0') === String(nr.wasteNum),
-        );
-        if (hit) {
-          await this.reportCache.update({ id: nr.id }, { reportId: Number(hit.id) });
-        }
+    if (!nullRows.length) return;
+    for (const nr of nullRows) {
+      const hit = all.find(
+        (r: any) =>
+          (r.produce_bill?.code ?? '') === nr.billCode &&
+          (r.pub_craft?.name ?? '') === nr.craftName &&
+          String(r.report_user_id ?? '') === String(nr.reportUserId) &&
+          String(r.valid_num ?? '0') === String(nr.validNum) &&
+          String(r.waste_num ?? '0') === String(nr.wasteNum),
+      );
+      if (hit) {
+        await this.reportCache.update({ id: nr.id }, { reportId: Number(hit.id) });
       }
     }
+  }
 
+  /** 远程报工记录行 → upsert 本地缓存（不含 reportTime，避免覆盖本地报工时间） */
+  private async upsertReportRows(all: any[]) {
     const rows = all.map((r: any) => ({
       reportId: r.id,
       billCode: r.produce_bill?.code ?? '',
@@ -293,9 +366,8 @@ export class KgdSyncService implements OnModuleInit {
       validMoney: String(r.valid_money ?? '0'),
       priceModeName: r.price_mode_name ?? '',
       remark: r.remark ?? null,
+      syncedAt: new Date(),
     }));
-    // rows 不含 reportTime：插入用列默认值，更新保留本地已记录的时间
     await this.reportCache.upsert(rows, ['reportId']);
-    this.logger.log(`报工记录同步完成：${rows.length} 条，耗时 ${Date.now() - start}ms`);
   }
 }

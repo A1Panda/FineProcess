@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -49,9 +49,15 @@ export class AuthService implements OnModuleInit {
       const roleName = u.role?.name ?? '';
       const exists = await this.users.findOneBy({ kgdUserId: u.id });
       if (exists) {
-        // 角色可能被修改（如改成生产班长），同步时刷新岗位名
-        if (exists.roleName !== roleName) {
-          await this.users.update({ id: exists.id }, { roleName });
+        // 用户名/姓名/岗位可能被修改（如名字打错后修正），同步时以快工单为准刷新（不覆盖密码）
+        const patch: Partial<User> = {};
+        const newUsername = u.name ?? `u${u.id}`;
+        const newName = u.real_name ?? u.name ?? '';
+        if (exists.username !== newUsername) patch.username = newUsername;
+        if (exists.name !== newName) patch.name = newName;
+        if (exists.roleName !== roleName) patch.roleName = roleName;
+        if (Object.keys(patch).length) {
+          await this.users.update({ id: exists.id }, patch);
         }
         continue;
       }
@@ -85,6 +91,41 @@ export class AuthService implements OnModuleInit {
       },
       order: { name: 'ASC' },
     });
+  }
+
+  /** 外部人员名单缓存（含当日编码），5 分钟过期 */
+  private externalCache: { ts: number; data: { name: string; code: string; kgdUserId: number | null }[] } | null = null;
+
+  /**
+   * 报工人候选：外部人员名单（含当日编码）合并本地快工单用户映射
+   * 返回 [{ name, code, kgdUserId }]；kgdUserId 为 null 表示该人员未匹配到快工单用户
+   * 外部服务器不可达时抛 503，前端可降级到本地用户列表
+   */
+  async listExternalReporters() {
+    const now = Date.now();
+    if (this.externalCache && now - this.externalCache.ts < 5 * 60 * 1000) return this.externalCache.data;
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    let daily: { name: string; code: string }[] = [];
+    try {
+      const res = await fetch(`${this.config.get<string>('externalEmployeeApi')}/api/daily`, { signal: ctrl.signal });
+      if (res.ok) {
+        const data = (await res.json()) as { employees?: { name: string; code: string }[] };
+        daily = data.employees ?? [];
+      }
+    } catch {
+      daily = [];
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!daily.length) throw new ServiceUnavailableException('外部人员服务器不可达');
+
+    const users = await this.users.find({ select: { kgdUserId: true, name: true } });
+    const byName = new Map(users.map((u) => [u.name, u.kgdUserId]));
+    const data = daily.map((e) => ({ name: e.name, code: e.code, kgdUserId: byName.get(e.name) ?? null }));
+    this.externalCache = { ts: now, data };
+    return data;
   }
 
   /** 本地登录并签发 JWT */

@@ -41,8 +41,8 @@
         <el-select v-model="reporterId" placeholder="选择报工人" filterable clearable style="width: 100%">
           <el-option
             v-for="u in reporterOptions"
-            :key="u.kgdUserId"
-            :label="u.name"
+            :key="u.kgdUserId ?? u.name"
+            :label="u.code ? `${u.name} (${u.code})` : u.name"
             :value="u.kgdUserId"
           />
         </el-select>
@@ -90,12 +90,20 @@ const auth = useAuthStore()
 const form = reactive({ validNum: 0, wasteNum: 0, workingMinutes: undefined, isFinish: false, remark: '' })
 const submitting = ref(false)
 
-/** 报工人选择：候选 = 该工序任务可报工人（快工单按工序配置）+ 当前用户兜底 */
+/** 报工人选择：候选 = 外部人员名单（含当日编码）按工序可报工人过滤 + 当前用户兜底 */
 const allUsers = ref([])
 const reporterOptions = ref([])
 const reporterId = ref()
 
 async function loadReporters() {
+  // 外部人员名单（含当日编码），失败则降级为本地用户列表
+  let external = null
+  try {
+    external = (await api.get('/auth/reporters')) ?? null // [{ name, code, kgdUserId }]
+  } catch {
+    external = null
+  }
+  // 本地用户：姓名 → 快工单 kgdUserId 的兜底映射
   try {
     allUsers.value = (await api.get('/auth/users')) ?? []
   } catch {
@@ -105,11 +113,27 @@ async function loadReporters() {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
-  const opts = allUsers.value.filter((u) => taskNames.includes(u.name))
   const me = allUsers.value.find((u) => u.kgdUserId === auth.user?.kgdUserId)
-  if (me && !opts.some((o) => o.kgdUserId === me.kgdUserId)) opts.unshift(me)
-  reporterOptions.value = opts
-  reporterId.value = me?.kgdUserId ?? opts[0]?.kgdUserId
+  const meName = me?.name ?? auth.user?.name
+
+  // 候选姓名 = 工序可报工人 ∪ 当前用户（去重）
+  const names = [...new Set(taskNames)]
+  if (meName && !names.includes(meName)) names.push(meName)
+
+  const extBy = new Map((external ?? []).map((e) => [e.name, e]))
+  const localBy = new Map(allUsers.value.map((u) => [u.name, u]))
+  reporterOptions.value = names
+    .map((n) => {
+      const ext = extBy.get(n)
+      const loc = localBy.get(n)
+      return {
+        kgdUserId: ext?.kgdUserId ?? loc?.kgdUserId ?? null,
+        name: n,
+        code: ext?.code ?? null,
+      }
+    })
+    .filter((o) => o.kgdUserId != null || o.name === meName)
+  reporterId.value = me?.kgdUserId ?? reporterOptions.value[0]?.kgdUserId
 }
 
 /** 剩余待加工数量 = 计划 - 已报良品 */

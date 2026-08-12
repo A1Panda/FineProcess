@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 /**
  * 报工记录本地缓存：快工单报工记录接口不返回创建时间，
@@ -53,6 +53,11 @@ export class KgdReportCache {
   @Column({ name: 'remark', type: 'varchar', length: 500, nullable: true })
   remark: string | null;
 
-  @UpdateDateColumn({ name: 'synced_at' })
-  syncedAt: Date;
+  /**
+   * 最近同步时间（普通列而非 UpdateDateColumn：
+   * upsert 冲突键 reportId 非主键，MySQL insertId=0 时 UpdateDateColumn 的回填回查会抛
+   * "Cannot update entity because entity id is not set"，故改为普通列 + 显式赋值）
+   */
+  @Column({ name: 'synced_at', type: 'datetime', nullable: true, default: () => 'CURRENT_TIMESTAMP' })
+  syncedAt: Date | null;
 }
