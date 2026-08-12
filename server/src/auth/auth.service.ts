@@ -93,8 +93,8 @@ export class AuthService implements OnModuleInit {
     });
   }
 
-  /** 外部人员名单缓存（含当日编码），5 分钟过期 */
-  private externalCache: { ts: number; data: { name: string; code: string; kgdUserId: number | null }[] } | null = null;
+  /** 外部人员名单缓存（含当日编码），5 分钟过期；跨日后即使未过期也强制刷新 */
+  private externalCache: { ts: number; date: string; data: { name: string; code: string; kgdUserId: number | null }[] } | null = null;
 
   /**
    * 报工人候选：外部人员名单（含当日编码）合并本地快工单用户映射
@@ -103,15 +103,21 @@ export class AuthService implements OnModuleInit {
    */
   async listExternalReporters() {
     const now = Date.now();
-    if (this.externalCache && now - this.externalCache.ts < 5 * 60 * 1000) return this.externalCache.data;
+    const today = this.localDateStr();
+    // 5 分钟内且未跨日才命中缓存；编码按日期变更，跨日后必须重新拉取
+    if (this.externalCache && this.externalCache.date === today && now - this.externalCache.ts < 5 * 60 * 1000) {
+      return this.externalCache.data;
+    }
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 3000);
     let daily: { name: string; code: string }[] = [];
+    let day = today;
     try {
       const res = await fetch(`${this.config.get<string>('externalEmployeeApi')}/api/daily`, { signal: ctrl.signal });
       if (res.ok) {
-        const data = (await res.json()) as { employees?: { name: string; code: string }[] };
+        const data = (await res.json()) as { date?: string; employees?: { name: string; code: string }[] };
+        if (typeof data.date === 'string' && data.date) day = data.date; // 以编码系统自己的日期为准
         daily = data.employees ?? [];
       }
     } catch {
@@ -124,8 +130,14 @@ export class AuthService implements OnModuleInit {
     const users = await this.users.find({ select: { kgdUserId: true, name: true } });
     const byName = new Map(users.map((u) => [u.name, u.kgdUserId]));
     const data = daily.map((e) => ({ name: e.name, code: e.code, kgdUserId: byName.get(e.name) ?? null }));
-    this.externalCache = { ts: now, data };
+    this.externalCache = { ts: now, date: day, data };
     return data;
+  }
+
+  /** 本地日期 YYYY-MM-DD */
+  private localDateStr(): string {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
   /** 本地登录并签发 JWT */
