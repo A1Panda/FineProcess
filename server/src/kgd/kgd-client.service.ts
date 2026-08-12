@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+﻿import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
 import { KgdAuthService } from './kgd-auth.service';
@@ -25,7 +25,7 @@ export class KgdClientService {
       if (
         body &&
         body.success === false &&
-        /请登录|未登录|登录已失效|登录过期/.test(body.msg ?? '')
+        /请登录|未登录|登录已失效|登录过期|无效|token/i.test(body.msg ?? '')
       ) {
         const cfg = resp.config;
         if (!cfg.headers['X-KGD-RETRIED']) {
