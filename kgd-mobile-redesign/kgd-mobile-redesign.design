@@ -100,8 +100,8 @@
       "version": 1,
       "createdAt": 1786414057000,
       "canvasData": {
-        "x": 618,
-        "y": 376,
+        "x": 492,
+        "y": 0,
         "group": 0,
         "layoutSnapshot": {
           "version": 1,
@@ -125,7 +125,7 @@
     }
   ],
   "config": {
-    "autoLayout": true,
+    "autoLayout": false,
     "deviceType": "mobile",
     "projectName": "快工单工序细化管理系统 · 移动端重设计",
     "designLibrary": {

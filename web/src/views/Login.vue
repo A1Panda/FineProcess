@@ -4,9 +4,9 @@
       <!-- 品牌区 -->
       <div class="brand">
         <div class="brand-logo">
-          <el-icon :size="30"><Briefcase /></el-icon>
+          <img class="brand-logo-img" :src="logoUrl" alt="公司 Logo" />
         </div>
-        <h1 class="title">工序管理系统</h1>
+        <h1 class="title">青岛航天石墨工序管理系统</h1>
         <p class="subtitle">快工单 · 车间作业平台</p>
       </div>
 
@@ -63,6 +63,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
+import logoUrl from '../assets/logo-md.jpg'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -111,16 +112,24 @@ async function submit() {
 }
 
 .brand-logo {
-  width: 64px;
-  height: 64px;
+  width: 76px;
+  height: 76px;
   margin: 0 auto;
-  border-radius: 18px;
-  background: var(--primary);
-  color: #fff;
+  border-radius: 20px;
+  background: #fff;
+  border: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: center;
   box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.brand-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .title {

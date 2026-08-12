@@ -4,8 +4,11 @@
     <header class="header">
       <div class="header-inner">
         <div class="header-left">
-          <h1 class="title">工作台</h1>
-          <p class="subtitle">{{ greeting }}</p>
+          <img class="header-logo" :src="logoUrl" alt="公司 Logo" />
+          <div class="header-text">
+            <h1 class="title">工作台</h1>
+            <p class="subtitle">{{ greeting }}</p>
+          </div>
         </div>
         <div class="header-right">
           <el-button circle plain class="round-btn" :class="{ spinning: refreshing }" aria-label="刷新工作台数据" @click="syncAndReload">
@@ -157,6 +160,7 @@ import api from '../api'
 import { useAuthStore } from '../stores/auth'
 import TaskCard from '../components/TaskCard.vue'
 import ReportDialog from '../components/ReportDialog.vue'
+import logoUrl from '../assets/logo-md.jpg'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -419,9 +423,29 @@ onMounted(() => {
   margin: 0 auto;
   padding: 16px 20px 12px;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.header-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  object-fit: cover;
+  box-shadow: var(--shadow-sm);
+  flex-shrink: 0;
+}
+
+.header-text {
+  min-width: 0;
 }
 
 .title {
