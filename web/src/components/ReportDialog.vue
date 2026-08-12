@@ -21,9 +21,17 @@
       </div>
       <div class="bill-goods" :title="task.goodsName">{{ task.goodsName }}</div>
       <div class="bill-stats">
-        <span class="stat">计划 <b>{{ task.num }}</b><span class="unit">{{ task.unitName }}</span></span>
-        <span class="stat">已报良品 <b class="ok">{{ task.validNum }}</b></span>
-        <span class="stat">剩余待加工 <b class="remain">{{ remaining }}</b></span>
+        <div class="bs-main">
+          <div class="bs-left">
+            <span class="bs-label">已报良品</span>
+            <span class="bs-num good">{{ task.validNum }}<span class="bs-total">/ {{ task.num }} {{ task.unitName }}</span></span>
+          </div>
+          <div class="bs-right">
+            <span class="bs-label">剩余待加工</span>
+            <span class="bs-num remain">{{ remaining }}</span>
+          </div>
+        </div>
+        <div class="bs-bar"><div class="bs-fill" :style="{ width: donePct + '%' }"></div></div>
       </div>
     </div>
 
@@ -108,6 +116,13 @@ async function loadReporters() {
 const remaining = computed(() =>
   Math.max(0, (Number(props.task?.num) || 0) - (Number(props.task?.validNum) || 0)),
 )
+
+/** 已完成百分比（0-100），用于进度条 */
+const donePct = computed(() => {
+  const num = Number(props.task?.num) || 0
+  if (num <= 0) return 0
+  return Math.max(0, Math.min(100, Math.round(((Number(props.task?.validNum) || 0) / num) * 100)))
+})
 
 watch(
   () => props.task,
@@ -222,58 +237,79 @@ async function submit() {
   word-break: break-all;
 }
 
-/* ===== 统计条：单行紧凑排布 ===== */
+/* ===== 统计区：左右分栏 + 完成度进度条 ===== */
 .bill-stats {
   display: flex;
-  align-items: center;
-  gap: 0;
+  flex-direction: column;
+  gap: 10px;
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 6px 4px;
-  font-size: 12px;
-  color: var(--muted-foreground);
+  border-radius: 12px;
+  padding: 10px 14px;
   font-variant-numeric: tabular-nums;
 }
 
-.stat {
-  flex: 1;
+.bs-main {
   display: flex;
-  align-items: baseline;
-  justify-content: center;
-  gap: 3px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bs-left,
+.bs-right {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
-  white-space: nowrap;
 }
 
-.stat + .stat {
-  border-left: 1px solid var(--border);
+.bs-right {
+  align-items: flex-end;
+  text-align: right;
 }
 
-.stat b {
-  font-size: 15px;
+.bs-label {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.bs-num {
+  font-size: 22px;
   font-weight: 600;
-  color: var(--foreground);
+  line-height: 1.1;
+  letter-spacing: -0.01em;
 }
 
-.stat .ok {
+.bs-num.good {
   color: var(--success);
 }
 
-.stat .remain {
+.bs-num.remain {
   color: var(--warning);
 }
 
-.stat .unit {
-  font-size: 11px;
+.bs-total {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  margin-left: 4px;
+  letter-spacing: 0;
 }
 
-.stat .remain {
-  color: var(--warning);
+/* 完成度进度条 */
+.bs-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--muted);
+  overflow: hidden;
 }
 
-.stat .unit {
-  font-size: 11px;
+.bs-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--success), #4cd964);
+  transition: width 0.4s ease;
 }
 
 /* ===== 表单 ===== */

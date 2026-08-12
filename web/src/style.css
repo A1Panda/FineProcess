@@ -376,12 +376,24 @@ body,
 /* ===== Select 下拉（报工人等）苹果毛玻璃风格 ===== */
 /* 触发器本体：圆角与表单输入框统一 */
 .el-select__wrapper {
-  border-radius: 10px;
+  border-radius: 12px;
   min-height: 34px;
 }
 
+/* 聚焦：单层外发光，避免双层 inset 描边造成内外两层圆角 */
 .el-select__wrapper.is-focused {
-  box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.2) inset, 0 0 0 1px var(--primary) inset;
+  box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.25);
+}
+
+/* filterable 时面板内搜索框：与面板同圆角、透明底，不产生嵌套圆角 */
+.el-select-dropdown__filter {
+  padding: 6px 6px 0;
+}
+
+.el-select-dropdown__filter .el-input__wrapper {
+  border-radius: 12px;
+  background: var(--muted);
+  box-shadow: none;
 }
 
 /* 下拉面板：毛玻璃 */
@@ -401,20 +413,21 @@ body,
   display: none;
 }
 
-/* 选项列表内边距 */
-.el-select-dropdown .el-scrollbar__view {
-  padding: 6px;
+/* 选项列表：紧凑内边距，只保留外层面板一层圆角 */
+.el-select-dropdown__list {
+  padding: 4px 0;
 }
 
-/* 选项：圆角胶囊悬停 */
+/* 选项：扁平整行（不设独立圆角与边距，避免面板内出现第二层圆角） */
 .el-select-dropdown__item {
-  height: 40px;
-  line-height: 40px;
-  padding: 0 14px;
-  margin: 2px 0;
-  border-radius: 10px;
+  height: 42px;
+  line-height: 42px;
+  padding: 0 16px;
+  margin: 0;
+  border-radius: 0;
   font-size: 13px;
   color: var(--foreground);
+  overflow: hidden;
 }
 
 .el-select-dropdown__item.hover,
