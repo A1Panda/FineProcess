@@ -45,6 +45,8 @@ services:
       DB_DATABASE: kgd_process
       # 本地登录 JWT 密钥
       JWT_SECRET: ${JWT_SECRET:-kgd-process-secret-key-2026}
+      # 机器人插件数据源共享密钥（AstrBot 日报插件调用 /api/report-data）
+      PLUGIN_API_KEY: ${PLUGIN_API_KEY:-}
       TZ: Asia/Shanghai
     ports:
       - "${SERVER_PORT:-3001}:3001"
