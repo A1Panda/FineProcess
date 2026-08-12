@@ -39,6 +39,9 @@
               @keyup.enter="submit"
             />
           </el-form-item>
+          <div class="login-options">
+            <el-checkbox v-model="remember">记住密码（下次自动登录）</el-checkbox>
+          </div>
           <el-button
             class="login-btn"
             type="primary"
@@ -59,7 +62,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
@@ -70,23 +73,57 @@ const auth = useAuthStore()
 
 const form = ref({ username: '', password: '' })
 const loading = ref(false)
+const remember = ref(false)
+const SAVED_KEY = 'kgd_saved_creds'
+// 密码仅做简单混淆（本地局域网系统），配合 localStorage 实现"记住密码自动登录"
+const enc = (s) => btoa(encodeURIComponent(s))
+const dec = (s) => decodeURIComponent(atob(s))
 
-async function submit() {
+function loadSaved() {
+  try {
+    const raw = localStorage.getItem(SAVED_KEY)
+    if (!raw) return
+    const saved = JSON.parse(raw)
+    if (saved?.username) {
+      form.value.username = saved.username
+      form.value.password = saved.password ? dec(saved.password) : ''
+      remember.value = true
+    }
+  } catch {
+    // 本地数据损坏则忽略，用户手动输入
+  }
+}
+
+async function submit(auto = false) {
   if (!form.value.username || !form.value.password) {
-    ElMessage.warning('请输入工号和密码')
+    if (!auto) ElMessage.warning('请输入工号和密码')
     return
   }
   loading.value = true
   try {
     await auth.login(form.value.username, form.value.password)
-    ElMessage.success('登录成功')
+    if (remember.value) {
+      localStorage.setItem(
+        SAVED_KEY,
+        JSON.stringify({ username: form.value.username, password: enc(form.value.password) }),
+      )
+    } else {
+      localStorage.removeItem(SAVED_KEY)
+    }
+    if (!auto) ElMessage.success('登录成功')
     router.push('/')
   } catch (e) {
-    ElMessage.error(e.response?.data?.message || '登录失败')
+    if (!auto) ElMessage.error(e.response?.data?.message || '登录失败')
   } finally {
     loading.value = false
   }
 }
+
+onMounted(() => {
+  loadSaved()
+  // 有记住的密码时自动登录，免去手动输入
+  if (remember.value && form.value.password) submit(true)
+})
 </script>
 
 <style scoped>
@@ -159,6 +196,12 @@ async function submit() {
   font-size: 13px;
   color: var(--muted-foreground);
   margin-bottom: 8px;
+}
+
+.login-options {
+  display: flex;
+  justify-content: flex-start;
+  margin: 0 0 18px;
 }
 
 .login-btn {
