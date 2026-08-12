@@ -1,10 +1,14 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { Interval } from '@nestjs/schedule';
+import { ConfigService } from '@nestjs/config';
+import * as bcrypt from 'bcryptjs';
 import { KgdClientService } from './kgd-client.service';
 import { KgdBillCache } from './kgd-bill-cache.entity';
 import { KgdTaskCache } from './kgd-task-cache.entity';
+import { KgdReportCache } from '../report/kgd-report-cache.entity';
+import { User } from '../auth/users.entity';
 
 const PAGE_SIZE = 100;
 const CONCURRENCY = 6; // 分页并发数：实测串行 41 页 28s，并发 6 约 5s，并发 8 约 4s
@@ -38,8 +42,11 @@ export class KgdSyncService implements OnModuleInit {
 
   constructor(
     private readonly kgdClient: KgdClientService,
+    private readonly config: ConfigService,
     @InjectRepository(KgdBillCache) private readonly bills: Repository<KgdBillCache>,
     @InjectRepository(KgdTaskCache) private readonly tasks: Repository<KgdTaskCache>,
+    @InjectRepository(KgdReportCache) private readonly reportCache: Repository<KgdReportCache>,
+    @InjectRepository(User) private readonly users: Repository<User>,
   ) {}
 
   onModuleInit() {
@@ -59,11 +66,50 @@ export class KgdSyncService implements OnModuleInit {
   private async doSync() {
     const start = Date.now();
     try {
-      await Promise.all([this.syncBills(), this.syncTasks()]);
+      await Promise.all([
+        this.syncBills(),
+        this.syncTasks(),
+        this.syncReportRecords(),
+        this.syncUsers(),
+      ]);
       this.logger.log(`数据同步完成，耗时 ${Date.now() - start}ms`);
     } catch (e) {
       this.logger.warn(`数据同步失败: ${(e as Error).message}`);
     }
+  }
+
+  /** 用户滚动同步：新增本地账号、刷新岗位名（报工人选择等依赖本地用户表，须及时更新） */
+  private async syncUsers() {
+    const start = Date.now();
+    const adminUsername = this.config.get<string>('kgd.username');
+    const defaultPassword = this.config.get<string>('kgd.defaultPassword', 'kgd123456');
+    const { data: kgdUsers } = await this.kgdClient.listUsers({ pageNo: 1, pageSize: 500 });
+    let created = 0;
+    let updated = 0;
+    for (const u of kgdUsers ?? []) {
+      const roleName = u.role?.name ?? '';
+      const exists = await this.users.findOneBy({ kgdUserId: u.id });
+      if (exists) {
+        if (exists.roleName !== roleName) {
+          await this.users.update({ id: exists.id }, { roleName });
+          updated++;
+        }
+        continue;
+      }
+      const hash = await bcrypt.hash(defaultPassword, 10);
+      await this.users.save(
+        this.users.create({
+          kgdUserId: u.id,
+          username: u.name ?? `u${u.id}`,
+          name: u.real_name ?? u.name ?? '',
+          password: hash,
+          role: u.name === adminUsername ? 'admin' : 'worker',
+          roleName,
+        }),
+      );
+      created++;
+    }
+    this.logger.log(`用户同步完成：新增 ${created}，更新岗位 ${updated}，耗时 ${Date.now() - start}ms`);
   }
 
   /** 加工单滚动同步（同步完成后清理远程已删除的记录） */
@@ -190,5 +236,66 @@ export class KgdSyncService implements OnModuleInit {
   /** 触发一次即时同步（写操作后 / 手动刷新时调用，可等待完成） */
   requestSync(): Promise<void> {
     return this.syncNow();
+  }
+
+  /**
+   * 报工记录滚动同步：分页拉取快工单全部报工记录缓存到本地
+   * - 本地已有（reportId 匹配）→ 更新业务字段；不写入 reportTime，避免覆盖本地报工时间
+   * - 本地 reportId 为空的行先按 加工单+工序+用户+数量 匹配补全 ID 再更新
+   * - 不做远程删除清理：报工记录删除罕见，且本地报工时间需保留
+   */
+  private async syncReportRecords() {
+    const start = Date.now();
+    const first = await this.kgdClient.listReportRecords({ pageNo: 1, pageSize: PAGE_SIZE });
+    const all: any[] = [...(first.data ?? [])];
+    const total = Math.min(first.count ?? all.length, 10_000);
+
+    const pageCount = Math.ceil(total / PAGE_SIZE);
+    let next = 2;
+    const worker = async () => {
+      while (next <= pageCount) {
+        const pageNo = next++;
+        const { data } = await this.kgdClient.listReportRecords({ pageNo, pageSize: PAGE_SIZE });
+        if (data?.length) all.push(...data);
+      }
+    };
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+
+    // 补全本地 reportId 为空的记录（报工后即时写入、反查失败的兜底）
+    const nullRows = await this.reportCache.find({ where: { reportId: IsNull() } });
+    if (nullRows.length) {
+      for (const nr of nullRows) {
+        const hit = all.find(
+          (r: any) =>
+            (r.produce_bill?.code ?? '') === nr.billCode &&
+            (r.pub_craft?.name ?? '') === nr.craftName &&
+            String(r.report_user_id ?? '') === String(nr.reportUserId) &&
+            String(r.valid_num ?? '0') === String(nr.validNum) &&
+            String(r.waste_num ?? '0') === String(nr.wasteNum),
+        );
+        if (hit) {
+          await this.reportCache.update({ id: nr.id }, { reportId: Number(hit.id) });
+        }
+      }
+    }
+
+    const rows = all.map((r: any) => ({
+      reportId: r.id,
+      billCode: r.produce_bill?.code ?? '',
+      craftName: r.pub_craft?.name ?? '',
+      unitName: r.produce_bill_craft?.unit?.name ?? '',
+      planNum: r.produce_bill_craft?.num ?? '',
+      reportUserId: String(r.report_user_id ?? ''),
+      reportUserName: r.report_user?.real_name ?? '',
+      validNum: String(r.valid_num ?? '0'),
+      wasteNum: String(r.waste_num ?? '0'),
+      workingMinutes: r.working_minutes ?? 0,
+      validMoney: String(r.valid_money ?? '0'),
+      priceModeName: r.price_mode_name ?? '',
+      remark: r.remark ?? null,
+    }));
+    // rows 不含 reportTime：插入用列默认值，更新保留本地已记录的时间
+    await this.reportCache.upsert(rows, ['reportId']);
+    this.logger.log(`报工记录同步完成：${rows.length} 条，耗时 ${Date.now() - start}ms`);
   }
 }

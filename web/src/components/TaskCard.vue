@@ -1,5 +1,5 @@
 <template>
-  <div class="task-card" @click="openRecords">
+  <div class="task-card" @click="openMenu">
     <div class="card-top">
       <span class="status-pill" :class="pillClass">{{ task.statusName }}</span>
       <span v-if="task.craftName" class="craft-chip">{{ task.craftName }}</span>
@@ -12,10 +12,10 @@
     </div>
 
     <div class="goods" :title="task.goodsName">{{ task.goodsName }}</div>
-    <div v-if="task.spec" class="meta spec-meta">规格：{{ task.spec }}</div>
+
     <div class="nums">
       <span class="num-item">计划 <b class="strong">{{ task.num }}</b><span class="unit">{{ task.unitName }}</span></span>
-      <span v-if="isTerminal" class="num-item">当前状态 <b class="status-name">{{ task.statusName }}</b></span>
+      <span v-if="isTerminal" class="num-item">进行到 <b class="status-name" :style="{ color: statusNameColor }">{{ currentCraftName }}</b></span>
       <template v-else>
         <span class="num-item">良品 <b class="ok">{{ task.validNum }}</b></span>
         <span class="num-item">不良 <b class="bad">{{ task.wasteNum }}</b></span>
@@ -23,52 +23,46 @@
       </template>
     </div>
 
-    <!-- 整张加工单的工序进度：每道工序一根进度条，当前工序高亮 -->
+    <!-- 整张加工单的工序进度：每道工序一根进度条，每道颜色不同，未开始显示灰色 -->
     <div v-if="craftProgress.length" class="progress">
       <div class="progress-title">工序进度</div>
       <div
-        v-for="c in craftProgress"
+        v-for="(c, i) in craftProgress"
         :key="c.craftName"
         class="p-row"
         :class="{ current: c.craftName === task.craftName }"
       >
-        <span class="p-name" :title="c.statusName">{{ c.craftName }}</span>
-        <div class="p-bar"><div class="p-fill" :style="{ width: pct(c) + '%' }" /></div>
+        <span class="p-name" :style="nameStyle(c, i)" :title="c.statusName">{{ c.craftName }}</span>
+        <div class="p-bar"><div class="p-fill" :style="fillStyle(c, i)" /></div>
         <span class="p-pct">{{ pct(c) }}%</span>
       </div>
     </div>
 
-    <div v-if="task.htNo" class="meta">HT图号：{{ task.htNo }}</div>
-
-    <div v-if="task.workshopPathNames" class="meta">车间：{{ task.workshopPathNames }}</div>
-
-    <div v-if="mode !== 'biancheng'" class="actions" @click.stop>
-      <template v-if="task.statusName === '未开始'">
-        <el-button type="primary" round size="small" @click="act('start')">开 工</el-button>
-      </template>
-      <template v-else-if="task.statusName === '进行中'">
-        <el-button round size="small" @click="act('pause')">暂停</el-button>
-        <el-button type="warning" round size="small" @click="openReport">报 工</el-button>
-        <el-button type="success" round size="small" @click="act('finish')">完工</el-button>
-      </template>
-      <template v-else-if="task.statusName === '已暂停'">
-        <el-button type="primary" round size="small" @click="act('start')">继续</el-button>
-        <el-button type="warning" round size="small" @click="openReport">报 工</el-button>
-      </template>
-      <template v-else>
-        <!-- 已终结任务：无操作按钮，当前状态已在数量区显示 -->
-      </template>
+    <!-- HT图号 + 车间：同一排 -->
+    <div class="meta-row">
+      <span v-if="task.htNo" class="meta">HT图号：{{ task.htNo }}</span>
+      <span v-if="task.workshopPathNames" class="meta">车间：{{ task.workshopPathNames }}</span>
     </div>
 
-    <div v-if="mode === 'biancheng'" class="actions" @click.stop>
-      <el-button type="success" round size="small" class="grow-btn" @click="doBianchengDone">完成编程</el-button>
-    </div>
-
-    <div v-if="mode === 'biancheng-cancel'" class="actions" @click.stop>
-      <el-button type="warning" round size="small" class="grow-btn" @click="doBianchengCancel">回未开始</el-button>
-    </div>
-
-    <div class="records-entry">查看报工记录 ›</div>
+    <!-- 环绕操作菜单：点击卡片后从点击位置弹出（Teleport 到 body，脱离卡片影响，保证可点击） -->
+    <Teleport to="body">
+      <div v-if="menuOpen" class="menu-mask" @click="closeMenu"></div>
+      <div v-if="menuOpen" class="radial-menu" :style="{ left: menuX + 'px', top: menuY + 'px' }">
+        <button
+          v-for="(item, idx) in menuItems"
+          :key="item.label"
+          class="menu-item"
+          :class="'tone-' + item.tone"
+          :style="{ '--dx': item.dx + 'px', '--dy': item.dy + 'px', '--i': idx }"
+          @click="runItem(item)"
+        >
+          <span class="menu-fab">
+            <el-icon :size="20"><component :is="item.icon" /></el-icon>
+          </span>
+          <span class="menu-label">{{ item.label }}</span>
+        </button>
+      </div>
+    </Teleport>
 
     <!-- @click.stop：弹窗渲染在卡片内部，阻止关闭按钮/遮罩的点击冒泡到卡片导致弹窗被重新打开 -->
     <div @click.stop>
@@ -78,7 +72,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 import ReportRecordsDialog from './ReportRecordsDialog.vue'
@@ -91,15 +85,45 @@ const recordsVisible = ref(false)
 /** 已终结任务（已完成/已取消等）：无操作按钮，数量区显示当前状态 */
 const isTerminal = computed(() => !['未开始', '进行中', '已暂停'].includes(props.task?.statusName))
 
-/** 剩余待加工数量 = 计划 - 良品（下限 0） */
-const remaining = computed(() => {
-  const plan = Number(props.task?.num) || 0
-  const ok = Number(props.task?.validNum) || 0
-  return Math.max(0, plan - ok)
-})
+/** 剩余待加工数量 = 计划 - 良品（不良品不再重复计入剩余） */
+const remaining = computed(() =>
+  Math.max(0, (Number(props.task?.num) || 0) - (Number(props.task?.validNum) || 0)),
+)
 
 /** 整张加工单的工序进度列表（每道工序含完成百分比），由后端按工艺顺序返回 */
 const craftProgress = computed(() => props.task?.craftProgress ?? [])
+
+/** 当前进行到的工序：取已开始工序中流程推进到的最新一道；全部未开始则显示"未开始" */
+const currentCraftName = computed(() => {
+  const progress = props.task?.craftProgress ?? []
+  const started = progress.filter((c) => isStarted(c))
+  if (!started.length) return '未开始'
+  return started[started.length - 1]?.craftName || '未开始'
+})
+
+/** 每种工序固定色板（按工序顺序取色）：每种工序颜色不同；未开始用淡色版，已开始用饱和色 */
+const CRAFT_COLORS = ['#4e8cff', '#00b578', '#ff9f0a', '#ff5a5f', '#8e5cff', '#00b8d9', '#e44c8f', '#5a7d9a']
+/** 已开始（进行到这一步）= 有报工记录（良品或不良数 > 0）；仅开工未报工不算 */
+const isStarted = (c) => (Number(c?.validNum) || 0) + (Number(c?.wasteNum) || 0) > 0
+const craftColor = (c, i) => CRAFT_COLORS[i % CRAFT_COLORS.length]
+const nameStyle = (c, i) => ({
+  color: craftColor(c, i),
+  opacity: isStarted(c) ? 1 : 0.45,
+  fontWeight: isStarted(c) ? 500 : 400,
+})
+
+/** "进行到"工序名的颜色：与进度条中该工序对应的颜色一致；"未开始"用灰色 */
+const statusNameColor = computed(() => {
+  const name = currentCraftName.value
+  if (name === '未开始') return 'var(--muted-foreground)'
+  const idx = (props.task?.craftProgress ?? []).findIndex((c) => c.craftName === name)
+  return idx >= 0 ? CRAFT_COLORS[idx % CRAFT_COLORS.length] : 'var(--success)'
+})
+const fillStyle = (c, i) => ({
+  width: pct(c) + '%',
+  background: craftColor(c, i),
+  opacity: isStarted(c) ? 0.9 : 0.25,
+})
 
 /** 完成百分比（0-100，后端已限制上限，这里兜底防越界） */
 function pct(c) {
@@ -107,23 +131,83 @@ function pct(c) {
   return Math.max(0, Math.min(100, v))
 }
 
-/** 点击卡片查看该加工单的报工记录 */
-function openRecords() {
-  recordsVisible.value = true
-}
-
-async function doBianchengDone() {
-  emit('bianchengDone', props.task)
-}
-
-async function doBianchengCancel() {
-  emit('bianchengCancel', props.task)
-}
-
 const pillClass = computed(() => {
   const map = { 未开始: 'pill-info', 进行中: 'pill-doing', 已完成: 'pill-done', 已暂停: 'pill-paused', 已取消: 'pill-info' }
   return map[props.task.statusName] || 'pill-info'
 })
+
+/* ===== 环绕操作菜单 ===== */
+const RADIUS = 82 // 按钮环绕半径
+const menuOpen = ref(false)
+const menuX = ref(0)
+const menuY = ref(0)
+
+/** 按角度均分环绕一圈，从正上方（12 点方向）开始 */
+function polar(i, n) {
+  const angle = (i / n) * Math.PI * 2 - Math.PI / 2
+  return { dx: Math.round(Math.cos(angle) * RADIUS), dy: Math.round(Math.sin(angle) * RADIUS) }
+}
+
+/** 根据任务状态 + 页面模式生成操作项 */
+const menuItems = computed(() => {
+  const list = []
+  if (props.mode === 'biancheng') {
+    list.push({ label: '完成编程', icon: 'Check', tone: 'success', run: doBianchengDone })
+  } else if (props.mode === 'biancheng-cancel') {
+    list.push({ label: '回未开始', icon: 'RefreshLeft', tone: 'warning', run: doBianchengCancel })
+  } else {
+    const st = props.task?.statusName
+    if (st === '未开始') {
+      list.push({ label: '开工', icon: 'VideoPlay', tone: 'primary', run: () => act('start') })
+    } else if (st === '进行中') {
+      list.push({ label: '暂停', icon: 'VideoPause', tone: 'warning', run: () => act('pause') })
+      list.push({ label: '报工', icon: 'EditPen', tone: 'primary', run: openReport })
+      list.push({ label: '完工', icon: 'CircleCheck', tone: 'success', run: () => act('finish') })
+    } else if (st === '已暂停') {
+      list.push({ label: '继续', icon: 'VideoPlay', tone: 'primary', run: () => act('start') })
+      list.push({ label: '报工', icon: 'EditPen', tone: 'primary', run: openReport })
+    }
+  }
+  list.push({ label: '记录', icon: 'Tickets', tone: 'default', run: openRecords })
+  return list.map((it, i) => ({ ...it, ...polar(i, list.length) }))
+})
+
+function openMenu(e) {
+  // 点击点靠近屏幕边缘时向内收，避免按钮溢出屏幕
+  const pad = 130
+  menuX.value = Math.min(Math.max(e.clientX, pad), window.innerWidth - pad)
+  menuY.value = Math.min(Math.max(e.clientY, pad), window.innerHeight - pad)
+  menuOpen.value = true
+  // 页面滚动时关闭菜单（触摸滑动滚动也会触发）
+  window.addEventListener('scroll', closeMenu, { capture: true, once: true })
+}
+
+function closeMenu() {
+  menuOpen.value = false
+  window.removeEventListener('scroll', closeMenu, { capture: true })
+}
+
+function runItem(item) {
+  closeMenu()
+  item.run()
+}
+
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', closeMenu, { capture: true })
+})
+
+/* ===== 业务操作 ===== */
+function openRecords() {
+  recordsVisible.value = true
+}
+
+function doBianchengDone() {
+  emit('bianchengDone', props.task)
+}
+
+function doBianchengCancel() {
+  emit('bianchengCancel', props.task)
+}
 
 async function act(action) {
   // 完工/暂停为敏感操作，先弹窗确认
@@ -217,12 +301,6 @@ function copyCode() {
   padding: 3px 10px;
 }
 
-.craft-chip.current {
-  background: rgba(0, 122, 255, 0.1);
-  color: var(--primary);
-  font-weight: 500;
-}
-
 .delivery-chip {
   margin-left: auto;
   flex-shrink: 0;
@@ -240,9 +318,8 @@ function copyCode() {
   gap: 6px;
   font-size: 14px;
   font-weight: 500;
-  color: var(--foreground);
-  cursor: pointer;
   color: var(--muted-foreground);
+  cursor: pointer;
 }
 
 .bill-code .code {
@@ -299,10 +376,6 @@ function copyCode() {
   color: var(--warning);
 }
 
-.spec-meta {
-  font-size: 12px;
-}
-
 .num-item .status-name {
   color: var(--success);
   font-weight: 600;
@@ -314,7 +387,6 @@ function copyCode() {
 }
 
 /* ===== 工序进度条 ===== */
-
 .progress {
   display: flex;
   flex-direction: column;
@@ -389,23 +461,109 @@ function copyCode() {
   color: var(--muted-foreground);
 }
 
-.actions {
+/* 车间 + 操作提示同一排 */
+.meta-row {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  flex-wrap: wrap;
+  min-width: 0;
 }
 
-.actions .el-button {
-  flex: 1;
+.meta-row .meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.grow-btn {
-  width: 100%;
+/* ===== 环绕操作菜单 ===== */
+.menu-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2900;
+  background: rgba(29, 29, 31, 0.05);
 }
 
-.records-entry {
+.radial-menu {
+  position: fixed;
+  z-index: 3000;
+  width: 0;
+  height: 0;
+}
+
+.menu-item {
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* 最终落位在环绕半径上（按钮中心对准点击点） */
+  transform: translate(calc(-50% + var(--dx, 0px)), calc(-50% + var(--dy, 0px)));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  width: 72px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  animation: menu-pop 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i) * 0.03s);
+}
+
+.menu-fab {
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted-foreground);
+}
+
+.menu-label {
   font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground);
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-sm);
+}
+
+.tone-primary .menu-fab {
+  background: rgba(0, 122, 255, 0.1);
+  border-color: transparent;
   color: var(--primary);
-  text-align: right;
+}
+
+.tone-warning .menu-fab {
+  background: rgba(255, 149, 0, 0.12);
+  border-color: transparent;
+  color: var(--warning);
+}
+
+.tone-success .menu-fab {
+  background: rgba(52, 199, 89, 0.12);
+  border-color: transparent;
+  color: var(--success);
+}
+
+@keyframes menu-pop {
+  0% {
+    transform: translate(calc(-50% + var(--dx, 0px) * 0.2), calc(-50% + var(--dy, 0px) * 0.2)) scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(calc(-50% + var(--dx, 0px)), calc(-50% + var(--dy, 0px))) scale(1);
+    opacity: 1;
+  }
 }
 </style>

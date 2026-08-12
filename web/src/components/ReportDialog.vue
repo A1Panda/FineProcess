@@ -23,11 +23,22 @@
       <div class="bill-stats">
         <span class="stat">计划 <b>{{ task.num }}</b><span class="unit">{{ task.unitName }}</span></span>
         <span class="stat">已报良品 <b class="ok">{{ task.validNum }}</b></span>
+        <span class="stat">剩余待加工 <b class="remain">{{ remaining }}</b></span>
       </div>
     </div>
 
     <!-- 移动端表单：标签置顶，良品/不良品并排 -->
     <el-form label-position="top" class="report-form" @submit.prevent>
+      <el-form-item label="报工人" class="field-full">
+        <el-select v-model="reporterId" placeholder="选择报工人" filterable clearable style="width: 100%">
+          <el-option
+            v-for="u in reporterOptions"
+            :key="u.kgdUserId"
+            :label="u.name"
+            :value="u.kgdUserId"
+          />
+        </el-select>
+      </el-form-item>
       <div class="field-row">
         <el-form-item label="良品数" required class="field-half">
           <el-input-number v-model="form.validNum" :min="0" :precision="0" :controls="false" style="width: 100%" />
@@ -57,26 +68,57 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
+import { useAuthStore } from '../stores/auth'
 
 const props = defineProps({ task: Object })
 const visible = defineModel('visible')
 const emit = defineEmits(['success'])
 
+const auth = useAuthStore()
+
 const form = reactive({ validNum: 0, wasteNum: 0, workingMinutes: undefined, isFinish: false, remark: '' })
 const submitting = ref(false)
+
+/** 报工人选择：候选 = 该工序任务可报工人（快工单按工序配置）+ 当前用户兜底 */
+const allUsers = ref([])
+const reporterOptions = ref([])
+const reporterId = ref()
+
+async function loadReporters() {
+  try {
+    allUsers.value = (await api.get('/auth/users')) ?? []
+  } catch {
+    allUsers.value = []
+  }
+  const taskNames = (props.task?.reportableUserNames ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const opts = allUsers.value.filter((u) => taskNames.includes(u.name))
+  const me = allUsers.value.find((u) => u.kgdUserId === auth.user?.kgdUserId)
+  if (me && !opts.some((o) => o.kgdUserId === me.kgdUserId)) opts.unshift(me)
+  reporterOptions.value = opts
+  reporterId.value = me?.kgdUserId ?? opts[0]?.kgdUserId
+}
+
+/** 剩余待加工数量 = 计划 - 已报良品 */
+const remaining = computed(() =>
+  Math.max(0, (Number(props.task?.num) || 0) - (Number(props.task?.validNum) || 0)),
+)
 
 watch(
   () => props.task,
   (t) => {
     if (t) {
-      form.validNum = Number(t.num || 0)
+      form.validNum = remaining.value
       form.wasteNum = 0
       form.workingMinutes = undefined
       form.isFinish = false
       form.remark = ''
+      loadReporters()
     }
   },
 )
@@ -88,6 +130,7 @@ async function submit() {
   }
   submitting.value = true
   try {
+    const rep = reporterOptions.value.find((o) => o.kgdUserId === reporterId.value)
     await api.post('/report', {
       produceCraftId: props.task.id,
       validNum: Number(form.validNum),
@@ -95,6 +138,8 @@ async function submit() {
       isFinish: form.isFinish,
       workingMinutes: form.workingMinutes ?? undefined,
       remark: form.remark || undefined,
+      reportUserId: reporterId.value ?? auth.user?.kgdUserId,
+      reportUserName: rep?.name ?? auth.user?.name,
     })
     ElMessage.success('报工成功')
     visible.value = false
@@ -177,13 +222,15 @@ async function submit() {
   word-break: break-all;
 }
 
+/* ===== 统计条：单行紧凑排布 ===== */
 .bill-stats {
   display: flex;
+  align-items: center;
   gap: 0;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 8px 0;
+  padding: 6px 4px;
   font-size: 12px;
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
@@ -194,7 +241,9 @@ async function submit() {
   display: flex;
   align-items: baseline;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .stat + .stat {
@@ -205,11 +254,22 @@ async function submit() {
   font-size: 15px;
   font-weight: 600;
   color: var(--foreground);
-  margin: 0 2px;
 }
 
 .stat .ok {
   color: var(--success);
+}
+
+.stat .remain {
+  color: var(--warning);
+}
+
+.stat .unit {
+  font-size: 11px;
+}
+
+.stat .remain {
+  color: var(--warning);
 }
 
 .stat .unit {

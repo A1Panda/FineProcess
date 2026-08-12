@@ -20,6 +20,13 @@ export class AuthController {
     return user;
   }
 
+  /** 本地用户列表（不含密码），供报工时按工序选择报工人等 */
+  @UseGuards(JwtAuthGuard)
+  @Get('users')
+  listUsers() {
+    return this.auth.listUsersLocal();
+  }
+
   /** 从快工单同步用户（管理操作） */
   @UseGuards(JwtAuthGuard)
   @Post('sync-users')

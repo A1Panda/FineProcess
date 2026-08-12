@@ -20,6 +20,10 @@ export interface ReportWorkDto {
   remark?: string;
   /** 报工时长（分钟） */
   workingMinutes?: number;
+  /** 报工人快工单用户ID（默认当前登录用户；代报工时指定） */
+  reportUserId?: number;
+  /** 报工人姓名（代报工时指定，用于本地记录） */
+  reportUserName?: string;
   /** 开始时间 YYYY-MM-DD HH:mm */
   startTime?: string;
   /** 结束时间 YYYY-MM-DD HH:mm */
@@ -56,9 +60,12 @@ export class ReportService {
 
   /** 报工：真实调用快工单，记录落本地 */
   async reportWork(user: JwtPayload, dto: ReportWorkDto) {
+    // 报工人：默认当前登录用户，可代报指定
+    const uid = dto.reportUserId ?? user.kgdUserId;
+    const uname = dto.reportUserName ?? user.name;
     const payload: Record<string, unknown> = {
       produce_craft_id: dto.produceCraftId,
-      report_user_id: String(user.kgdUserId),
+      report_user_id: String(uid),
       valid_num: String(dto.validNum),
       waste_num: String(dto.wasteNum),
       is_finish: dto.isFinish ? 1 : 2,
@@ -72,7 +79,7 @@ export class ReportService {
 
     const result = await this.kgdClient.addReportWorkRecord(payload);
     // 记录本地报工时间（快工单报工接口不返回创建时间，用于弹窗展示）
-    await this.recordLocalReport(user, dto, result.data);
+    await this.recordLocalReport({ kgdUserId: uid, name: uname } as JwtPayload, dto, result.data);
     // 报工成功后直接更新本地缓存，前端 reload 立即看到最新良品/不良品数（无需等同步）
     await this.updateTaskCacheAfterReport(dto);
     // 后台同步，用快工单真实数据校准缓存
@@ -175,59 +182,62 @@ export class ReportService {
     return this.kgdClient.listReportRecords({ pageNo: 1, pageSize: 100, report_user_id: user.kgdUserId });
   }
 
-  /** 按加工单编号查报工记录，整理为前端展示结构（合并本地报工时间） */
+  /** 按加工单编号查报工记录（读本地缓存：后台每 5 分钟同步 + 报工/修改后即时刷新） */
   async getReportsByBillCode(code: string) {
-    const { data, count } = await this.kgdClient.listReportRecords({
-      pageNo: 1,
-      pageSize: 200,
-      produce_bill_code: code,
+    let rows = await this.reportCache.find({
+      where: { billCode: code },
+      order: { reportId: 'DESC' },
     });
-    const list = (data ?? []).map((r: Record<string, any>) => ({
-      id: r.id,
-      reportUser: r.report_user?.real_name ?? '',
-      reportUserId: r.report_user?.id ?? '',
+    // 兜底：本地尚无该单缓存时即时拉取一次写入本地，之后均走缓存
+    if (!rows.length) {
+      const { data } = await this.kgdClient.listReportRecords({
+        pageNo: 1,
+        pageSize: 200,
+        produce_bill_code: code,
+      });
+      if (data?.length) {
+        await this.reportCache.upsert(this.mapReportRows(data), ['reportId']);
+        rows = await this.reportCache.find({
+          where: { billCode: code },
+          order: { reportId: 'DESC' },
+        });
+      }
+    }
+    const list = rows.map((r) => ({
+      id: Number(r.reportId ?? 0),
+      reportUser: r.reportUserName,
+      reportUserId: r.reportUserId,
+      craftName: r.craftName,
+      unitName: r.unitName,
+      planNum: r.planNum,
+      validNum: r.validNum,
+      wasteNum: r.wasteNum,
+      workingMinutes: r.workingMinutes,
+      validMoney: r.validMoney,
+      priceModeName: r.priceModeName,
+      remark: r.remark ?? '',
+      reportTime: r.reportTime,
+    }));
+    return { code, list, total: list.length };
+  }
+
+  /** 快工单报工记录 → 本地缓存行（不含 reportTime，避免覆盖本地报工时间） */
+  private mapReportRows(data: Record<string, any>[]): Partial<KgdReportCache>[] {
+    return data.map((r) => ({
+      reportId: r.id,
+      billCode: r.produce_bill?.code ?? '',
       craftName: r.pub_craft?.name ?? '',
       unitName: r.produce_bill_craft?.unit?.name ?? '',
       planNum: r.produce_bill_craft?.num ?? '',
-      validNum: r.valid_num ?? '0',
-      wasteNum: r.waste_num ?? '0',
+      reportUserId: String(r.report_user_id ?? ''),
+      reportUserName: r.report_user?.real_name ?? '',
+      validNum: String(r.valid_num ?? '0'),
+      wasteNum: String(r.waste_num ?? '0'),
       workingMinutes: r.working_minutes ?? 0,
-      validMoney: r.valid_money ?? '0',
+      validMoney: String(r.valid_money ?? '0'),
       priceModeName: r.price_mode_name ?? '',
-      remark: r.remark ?? '',
-      reportTime: '',
+      remark: r.remark ?? null,
     }));
-    await this.mergeLocalReportTime(code, list);
-    return { code, list, total: count ?? list.length };
-  }
-
-  /** 合并本地报工时间：先按快工单记录ID精确匹配，匹配不到再按 工序+用户+数量 兜底 */
-  private async mergeLocalReportTime(code: string, list: Array<{ id: number; reportTime: string }>) {
-    const localRecs = await this.reportCache.findBy({ billCode: code });
-    if (!localRecs.length) return;
-    const used = new Set<number>();
-    for (const item of list) {
-      const byId = localRecs.find(
-        (l) => l.reportId && String(l.reportId) === String(item.id) && !used.has(l.id),
-      );
-      if (byId) {
-        used.add(byId.id);
-        item.reportTime = byId.reportTime;
-        continue;
-      }
-      const loose = localRecs.find(
-        (l) =>
-          !used.has(l.id) &&
-          l.craftName === (item as any).craftName &&
-          l.reportUserId === String((item as any).reportUserId) &&
-          l.validNum === String((item as any).validNum) &&
-          l.wasteNum === String((item as any).wasteNum),
-      );
-      if (loose) {
-        used.add(loose.id);
-        item.reportTime = loose.reportTime;
-      }
-    }
   }
 
   /** 报工成功后记录本地报工时间：优先取 add 接口直接返回的ID，否则按任务+用户反查最新一条 */

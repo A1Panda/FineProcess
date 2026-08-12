@@ -33,6 +33,8 @@ export interface TaskView {
   standardWorkingMinutes: string;
   /** 交期（来自加工单 delivery_date，无则空串） */
   deliveryDate: string | null;
+  /** 该任务可报工人姓名（逗号分隔，快工单按工序配置），供报工时选择报工人 */
+  reportableUserNames: string | null;
   /** 整张加工单的工序进度（同单按工艺顺序排列，含当前任务所在工序） */
   craftProgress: CraftProgress[];
 }
@@ -41,6 +43,8 @@ export interface TaskView {
 export interface CraftProgress {
   craftName: string;
   statusName: string;
+  /** 1=未开始 2=进行中 3=已完成 4=已暂停（用于前端判断工序是否已开始） */
+  status: number;
   /** 完成百分比 0-100（良品+不良 / 计划数） */
   percent: number;
   num: number;
@@ -81,6 +85,7 @@ export class TasksService {
       unitMoney: '',
       standardWorkingMinutes: '',
       deliveryDate,
+      reportableUserNames: t.reportableUserNames,
       craftProgress: [],
     };
   }
@@ -215,6 +220,7 @@ export class TasksService {
       return {
         craftName: c.craftName,
         statusName: c.statusName,
+        status: Number(c.status),
         percent,
         num,
         validNum: Number(c.validNum) || 0,

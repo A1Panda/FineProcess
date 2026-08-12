@@ -26,6 +26,10 @@ export class User {
   @Column({ default: 'worker' })
   role: string;
 
+  /** 快工单岗位名（如 生产工/生产班长/生产主管/质检员），用于后续任务分配与权限管理 */
+  @Column({ name: 'role_name', type: 'varchar', length: 64, nullable: true, default: '' })
+  roleName: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

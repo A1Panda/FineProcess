@@ -3,7 +3,7 @@
     <!-- 顶部 -->
     <header class="header">
       <div class="header-inner">
-        <el-button circle plain class="round-btn" aria-label="返回工作台" @click="router.back()">
+        <el-button circle plain class="round-btn" aria-label="返回主页" @click="router.push('/')">
           <el-icon :size="20"><ArrowLeft /></el-icon>
         </el-button>
         <div class="title">

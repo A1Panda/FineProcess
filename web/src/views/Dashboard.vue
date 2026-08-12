@@ -11,11 +11,24 @@
           <el-button circle plain class="round-btn" :class="{ spinning: refreshing }" aria-label="刷新工作台数据" @click="syncAndReload">
             <el-icon :size="20"><Refresh /></el-icon>
           </el-button>
-          <el-dropdown @command="onCommand">
+          <el-dropdown popper-class="user-popper" @command="onCommand">
             <div class="avatar" :aria-label="auth.user?.name">{{ avatarChar }}</div>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+                <!-- 用户信息头：头像 + 姓名 + 岗位 -->
+                <div class="up-head">
+                  <div class="up-avatar">{{ avatarChar }}</div>
+                  <div class="up-id">
+                    <div class="up-name">{{ auth.user?.name }}</div>
+                    <div class="up-role">{{ roleNameText }}</div>
+                  </div>
+                </div>
+                <!-- 权限说明：图标化区分管理员 / 工人 -->
+                <div class="up-perm">
+                  <el-icon :size="14"><component :is="isAdmin ? 'Lock' : 'User'" /></el-icon>
+                  <span>{{ permissionText }}</span>
+                </div>
+                <el-dropdown-item divided command="logout" class="up-logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -176,6 +189,18 @@ const tabs = [
 const currentTab = computed(() => tabs.find((t) => t.key === activeTab.value))
 
 const avatarChar = computed(() => auth.user?.name?.[0] || '工')
+
+const isAdmin = computed(() => auth.user?.role === 'admin')
+
+/** 岗位名：优先显示快工单岗位（如 生产班长），无则按系统角色兜底 */
+const roleNameText = computed(
+  () => auth.user?.roleName || (auth.user?.role === 'admin' ? '管理员' : '工人'),
+)
+
+/** 当前权限说明（随系统角色变化） */
+const permissionText = computed(() =>
+  auth.user?.role === 'admin' ? '管理员：可查看全部任务与工序' : '工人：工作台仅查看本人任务',
+)
 
 const greeting = computed(() => {
   const d = new Date()
@@ -367,7 +392,16 @@ function shortDate(v) {
   return m && d ? `${+m}/${+d}` : v
 }
 
-onMounted(refresh)
+onMounted(() => {
+  refresh()
+  // 刷新当前用户信息（岗位/权限可能已变化，登录后首次进入也能拿到最新）
+  api
+    .get('/auth/me')
+    .then((me) => {
+      if (me) auth.setUser({ ...auth.user, ...me, id: auth.user?.id ?? me?.sub })
+    })
+    .catch(() => undefined)
+})
 </script>
 
 <style scoped>

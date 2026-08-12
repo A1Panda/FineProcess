@@ -112,8 +112,19 @@ body,
   border-radius: 14px;
 }
 
+/* ===== 弹窗遮罩：更透的暗色，突出毛玻璃层 ===== */
+.el-overlay {
+  background-color: rgba(29, 29, 31, 0.24);
+}
+
+/* ===== Dialog（报工/报工记录等）苹果毛玻璃风格 ===== */
 .el-dialog {
-  border-radius: 20px;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+  box-shadow: 0 24px 56px -16px rgba(0, 0, 0, 0.24), 0 6px 16px -6px rgba(0, 0, 0, 0.08);
 }
 
 .el-dialog__header {
@@ -129,13 +140,39 @@ body,
   padding: 8px 20px 18px;
 }
 
-/* ===== MessageBox（完工/暂停/编程确认）Apple 风格 ===== */
+/* 弹窗关闭按钮：圆形灰底 */
+.el-dialog__headerbtn {
+  width: 30px;
+  height: 30px;
+  top: 16px;
+  right: 16px;
+  border-radius: 999px;
+  background: rgba(29, 29, 31, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.el-dialog__headerbtn:hover {
+  background: rgba(29, 29, 31, 0.1);
+}
+
+.el-dialog__headerbtn .el-dialog__close {
+  font-size: 15px;
+  color: var(--muted-foreground);
+}
+
+/* ===== MessageBox（完工/暂停/编程确认）苹果毛玻璃风格 ===== */
 .el-message-box {
-  border-radius: 20px;
-  border: none;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
   padding: 20px;
-  width: min(85vw, 420px);
-  box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.18), 0 4px 12px -4px rgba(0, 0, 0, 0.08);
+  width: min(85vw, 400px);
+  background: rgba(255, 255, 255, 0.55);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+  box-shadow: 0 24px 56px -16px rgba(0, 0, 0, 0.24), 0 6px 16px -6px rgba(0, 0, 0, 0.08);
 }
 
 .el-message-box__header {
@@ -147,6 +184,28 @@ body,
   font-weight: 600;
   color: var(--foreground);
   letter-spacing: -0.01em;
+}
+
+.el-message-box__headerbtn {
+  width: 30px;
+  height: 30px;
+  top: 16px;
+  right: 16px;
+  border-radius: 999px;
+  background: rgba(29, 29, 31, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.el-message-box__headerbtn:hover {
+  background: rgba(29, 29, 31, 0.1);
+}
+
+.el-message-box__headerbtn .el-message-box__close {
+  font-size: 15px;
+  color: var(--muted-foreground);
 }
 
 .el-message-box__content {
@@ -188,4 +247,201 @@ body,
   padding: 0 18px;
   font-size: 14px;
   margin: 0;
+}
+
+/* 浏览器不支持 backdrop-filter 时回退为纯白背景，保证可读性 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .el-dialog,
+  .el-message-box {
+    background: #ffffff;
+  }
+}
+
+/* ===== 头像下拉（用户信息与权限）苹果毛玻璃风格 ===== */
+.user-popper.el-popper {
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.8);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: 0 24px 56px -16px rgba(0, 0, 0, 0.24), 0 6px 16px -6px rgba(0, 0, 0, 0.08);
+  padding: 6px;
+}
+
+.user-popper .el-dropdown-menu {
+  background: transparent;
+  padding: 0;
+}
+
+/* 用户信息头 */
+.user-popper .up-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 12px;
+}
+
+.user-popper .up-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  background: rgba(0, 122, 255, 0.12);
+  color: var(--primary);
+  font-size: 17px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.user-popper .up-id {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.user-popper .up-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--foreground);
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-popper .up-role {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--primary);
+  background: rgba(0, 122, 255, 0.1);
+  border-radius: 999px;
+  padding: 2px 10px;
+  align-self: flex-start;
+  white-space: nowrap;
+}
+
+/* 权限说明行 */
+.user-popper .up-perm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 6px;
+  padding: 10px 12px;
+  background: var(--muted);
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+
+.user-popper .up-perm .el-icon {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+/* 下拉项：圆角 + 分隔线融入 */
+.user-popper .el-dropdown-menu__item {
+  border-radius: 12px;
+  margin: 2px 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+.user-popper .el-dropdown-menu__item:hover,
+.user-popper .el-dropdown-menu__item:focus {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.user-popper .el-dropdown-menu__item--divided {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.user-popper .el-dropdown-menu__item.up-logout {
+  color: var(--destructive);
+  font-weight: 500;
+}
+
+.user-popper .el-dropdown-menu__item.up-logout:hover,
+.user-popper .el-dropdown-menu__item.up-logout:focus {
+  background: rgba(255, 59, 48, 0.08);
+  color: var(--destructive);
+}
+
+/* ===== Select 下拉（报工人等）苹果毛玻璃风格 ===== */
+/* 触发器本体：圆角与表单输入框统一 */
+.el-select__wrapper {
+  border-radius: 10px;
+  min-height: 34px;
+}
+
+.el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.2) inset, 0 0 0 1px var(--primary) inset;
+}
+
+/* 下拉面板：毛玻璃 */
+.el-select-dropdown {
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.82);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: 0 20px 48px -16px rgba(0, 0, 0, 0.22), 0 6px 16px -6px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  max-height: 45vh;
+}
+
+/* 隐藏 popper 箭头，保持圆角干净 */
+.el-select-dropdown .el-popper__arrow {
+  display: none;
+}
+
+/* 选项列表内边距 */
+.el-select-dropdown .el-scrollbar__view {
+  padding: 6px;
+}
+
+/* 选项：圆角胶囊悬停 */
+.el-select-dropdown__item {
+  height: 40px;
+  line-height: 40px;
+  padding: 0 14px;
+  margin: 2px 0;
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+.el-select-dropdown__item.hover,
+.el-select-dropdown__item:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.el-select-dropdown__item.is-selected {
+  color: var(--primary);
+  font-weight: 600;
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.el-select-dropdown__empty {
+  padding: 16px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+
+/* filterable 时面板内搜索框 */
+.el-select-dropdown__filter .el-input__wrapper {
+  border-radius: 10px;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .el-select-dropdown {
+    background: #ffffff;
+  }
 }

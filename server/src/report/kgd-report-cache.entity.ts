@@ -9,8 +9,8 @@ export class KgdReportCache {
   @PrimaryGeneratedColumn()
   id: number;
 
-  /** 快工单报工记录ID（add 后按任务+用户反查，历史/未知时为空） */
-  @Column({ name: 'report_id', type: 'bigint', nullable: true })
+  /** 快工单报工记录ID（add 后按任务+用户反查，历史/未知时为空）；唯一约束保证 upsert 幂等 */
+  @Column({ name: 'report_id', type: 'bigint', nullable: true, unique: true })
   reportId: number | null;
 
   @Column({ name: 'bill_code', length: 64, default: '' })
@@ -18,6 +18,12 @@ export class KgdReportCache {
 
   @Column({ name: 'craft_name', length: 64, default: '' })
   craftName: string;
+
+  @Column({ name: 'unit_name', length: 32, default: '' })
+  unitName: string;
+
+  @Column({ name: 'plan_num', length: 32, default: '' })
+  planNum: string;
 
   @Column({ name: 'report_user_id', length: 32, default: '' })
   reportUserId: string;
@@ -33,6 +39,12 @@ export class KgdReportCache {
 
   @Column({ name: 'working_minutes', type: 'int', default: 0 })
   workingMinutes: number;
+
+  @Column({ name: 'valid_money', length: 32, default: '0' })
+  validMoney: string;
+
+  @Column({ name: 'price_mode_name', length: 32, default: '' })
+  priceModeName: string;
 
   /** 报工时间（本地记录，YYYY-MM-DD HH:mm:ss） */
   @Column({ name: 'report_time', length: 32, default: '' })

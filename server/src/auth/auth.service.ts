@@ -13,6 +13,7 @@ export interface JwtPayload {
   username: string;
   name: string;
   role: string;
+  roleName: string | null;
 }
 
 @Injectable()
@@ -39,14 +40,21 @@ export class AuthService implements OnModuleInit {
     }, 5_000);
   }
 
-  /** 启动时从快工单同步用户到本地（已存在则跳过，不覆盖密码） */
+  /** 启动时从快工单同步用户到本地（已存在则刷新岗位名，不覆盖密码） */
   async syncUsersFromKgd(): Promise<number> {
     const adminUsername = this.config.get<string>('kgd.username');
     const { data: kgdUsers } = await this.kgdClient.listUsers({ pageNo: 1, pageSize: 500 });
     let created = 0;
     for (const u of kgdUsers ?? []) {
+      const roleName = u.role?.name ?? '';
       const exists = await this.users.findOneBy({ kgdUserId: u.id });
-      if (exists) continue;
+      if (exists) {
+        // 角色可能被修改（如改成生产班长），同步时刷新岗位名
+        if (exists.roleName !== roleName) {
+          await this.users.update({ id: exists.id }, { roleName });
+        }
+        continue;
+      }
       const hash = await bcrypt.hash(this.defaultPassword, 10);
       await this.users.save(
         this.users.create({
@@ -55,12 +63,28 @@ export class AuthService implements OnModuleInit {
           name: u.real_name ?? u.name ?? '',
           password: hash,
           role: u.name === adminUsername ? 'admin' : 'worker',
+          roleName,
         }),
       );
       created++;
     }
     this.logger.log(`已从快工单同步用户，新增 ${created} 个本地账号（默认密码 ${this.defaultPassword}）`);
     return created;
+  }
+
+  /** 本地用户列表（不含密码），供前端按工序选择报工人等 */
+  listUsersLocal() {
+    return this.users.find({
+      select: {
+        id: true,
+        kgdUserId: true,
+        username: true,
+        name: true,
+        role: true,
+        roleName: true,
+      },
+      order: { name: 'ASC' },
+    });
   }
 
   /** 本地登录并签发 JWT */
@@ -79,6 +103,7 @@ export class AuthService implements OnModuleInit {
       username: user.username,
       name: user.name,
       role: user.role,
+      roleName: user.roleName ?? null,
     };
     return {
       accessToken: await this.jwt.signAsync(payload),
@@ -88,6 +113,7 @@ export class AuthService implements OnModuleInit {
         username: user.username,
         name: user.name,
         role: user.role,
+        roleName: user.roleName ?? null,
       },
     };
   }
