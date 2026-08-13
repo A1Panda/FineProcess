@@ -11,6 +11,9 @@
           </div>
         </div>
         <div class="header-right">
+          <button class="theme-toggle" aria-label="切换深色模式" :class="{ anim: themeAnim }" @click="onToggleTheme">
+            <span class="toggle-icon"><el-icon :size="18"><Moon v-if="isDark" /><Sunny v-else /></el-icon></span>
+          </button>
           <el-button circle plain class="round-btn" :class="{ spinning: refreshing }" aria-label="刷新工作台数据（短按增量同步，长按全量同步）" @pointerdown="onRefreshPress" @contextmenu.prevent>
             <el-icon :size="20"><Refresh /></el-icon>
           </el-button>
@@ -161,6 +164,7 @@ import { useAuthStore } from '../stores/auth'
 import TaskCard from '../components/TaskCard.vue'
 import ReportDialog from '../components/ReportDialog.vue'
 import logoUrl from '../assets/logo-md.jpg'
+import { isDark as getDark, toggleTheme } from '../utils/theme'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -193,6 +197,20 @@ const tabs = [
 const currentTab = computed(() => tabs.find((t) => t.key === activeTab.value))
 
 const avatarChar = computed(() => auth.user?.name?.[0] || '工')
+
+/* ===== 主题切换 ===== */
+const isDark = ref(getDark())
+const themeAnim = ref(false)
+
+function onToggleTheme(e) {
+  themeAnim.value = false
+  // 触发图标旋转动画
+  requestAnimationFrame(() => {
+    themeAnim.value = true
+  })
+  window.setTimeout(() => (themeAnim.value = false), 500)
+  isDark.value = toggleTheme(e?.currentTarget)
+}
 
 const isAdmin = computed(() => auth.user?.role === 'admin')
 
@@ -438,7 +456,7 @@ onMounted(() => {
   position: sticky;
   top: 0;
   z-index: 30;
-  background: rgba(242, 242, 247, 0.92);
+  background: var(--header-bg);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
 }

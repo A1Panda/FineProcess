@@ -19,8 +19,40 @@
   --warning: #ff9500;
   --destructive: #ff3b30;
   --radius: 1.2rem;
+  --header-bg: rgba(242, 242, 247, 0.92);
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-border: rgba(255, 255, 255, 0.55);
+  --glass-strong: rgba(255, 255, 255, 0.8);
+  --glass-stronger: rgba(255, 255, 255, 0.82);
+  --chip-bg: rgba(29, 29, 31, 0.06);
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05), 0 1px 3px -1px rgba(0, 0, 0, 0.05);
   --shadow-lg: 0 8px 24px -8px rgba(0, 0, 0, 0.12), 0 4px 8px -4px rgba(0, 0, 0, 0.06);
+}
+
+/* ===== 深色模式（Apple iOS 深色规范） ===== */
+[data-theme='dark'] {
+  --background: #000000;
+  --card: #1c1c1e;
+  --foreground: #f5f5f7;
+  --secondary: #2c2c2e;
+  --secondary-foreground: #f5f5f7;
+  --muted: #2c2c2e;
+  --muted-foreground: #98989f;
+  --border: #38383a;
+  --primary: #0a84ff;
+  --primary-foreground: #ffffff;
+  --success: #32d74b;
+  --warning: #ff9f0a;
+  --destructive: #ff453a;
+  --header-bg: rgba(0, 0, 0, 0.85);
+  --glass-bg: rgba(28, 28, 30, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-strong: rgba(28, 28, 30, 0.82);
+  --glass-stronger: rgba(28, 28, 30, 0.84);
+  --chip-bg: rgba(255, 255, 255, 0.08);
+  --mask-bg: rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4), 0 1px 3px -1px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px -8px rgba(0, 0, 0, 0.5), 0 4px 8px -4px rgba(0, 0, 0, 0.4);
 }
 
 html,
@@ -120,8 +152,8 @@ body,
 /* ===== Dialog（报工/报工记录等）苹果毛玻璃风格 ===== */
 .el-dialog {
   border-radius: 22px;
-  border: 1px solid rgba(255, 255, 255, 0.55);
-  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
   -webkit-backdrop-filter: blur(28px) saturate(180%);
   backdrop-filter: blur(28px) saturate(180%);
   box-shadow: 0 24px 56px -16px rgba(0, 0, 0, 0.24), 0 6px 16px -6px rgba(0, 0, 0, 0.08);
@@ -166,10 +198,10 @@ body,
 /* ===== MessageBox（完工/暂停/编程确认）苹果毛玻璃风格 ===== */
 .el-message-box {
   border-radius: 22px;
-  border: 1px solid rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--glass-border);
   padding: 20px;
   width: min(85vw, 400px);
-  background: rgba(255, 255, 255, 0.55);
+  background: var(--glass-bg);
   -webkit-backdrop-filter: blur(28px) saturate(180%);
   backdrop-filter: blur(28px) saturate(180%);
   box-shadow: 0 24px 56px -16px rgba(0, 0, 0, 0.24), 0 6px 16px -6px rgba(0, 0, 0, 0.08);
@@ -260,8 +292,8 @@ body,
 /* ===== 头像下拉（用户信息与权限）苹果毛玻璃风格 ===== */
 .user-popper.el-popper {
   border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.55);
-  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-strong);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
   box-shadow: 0 24px 56px -16px rgba(0, 0, 0, 0.24), 0 6px 16px -6px rgba(0, 0, 0, 0.08);
@@ -399,8 +431,8 @@ body,
 /* 下拉面板：毛玻璃 */
 .el-select-dropdown {
   border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.55);
-  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-stronger);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
   box-shadow: 0 20px 48px -16px rgba(0, 0, 0, 0.22), 0 6px 16px -6px rgba(0, 0, 0, 0.08);
@@ -456,5 +488,197 @@ body,
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .el-select-dropdown {
     background: #ffffff;
+  }
+}
+
+/* ===== 深色模式：Element Plus 变量与细节覆写 ===== */
+[data-theme='dark'] {
+  --el-color-primary: #0a84ff;
+  --el-color-primary-dark-2: #339dff;
+  --el-color-primary-light-3: #0060df;
+  --el-color-primary-light-5: #004cae;
+  --el-color-primary-light-7: #003274;
+  --el-color-primary-light-8: #00265c;
+  --el-color-primary-light-9: #001a3d;
+  --el-color-success: #32d74b;
+  --el-color-success-dark-2: #63e07a;
+  --el-color-success-light-3: #22a53a;
+  --el-color-success-light-5: #1a7f2d;
+  --el-color-success-light-7: #115521;
+  --el-color-success-light-8: #0d4218;
+  --el-color-success-light-9: #092f11;
+  --el-color-warning: #ff9f0a;
+  --el-color-warning-dark-2: #ffb43d;
+  --el-color-warning-light-3: #cc7e08;
+  --el-color-warning-light-5: #99600b;
+  --el-color-warning-light-7: #66420f;
+  --el-color-warning-light-8: #4d3211;
+  --el-color-warning-light-9: #332211;
+  --el-color-danger: #ff453a;
+  --el-color-danger-dark-2: #ff6b61;
+  --el-color-danger-light-3: #cc3730;
+  --el-color-danger-light-5: #992a25;
+  --el-color-danger-light-7: #661c19;
+  --el-color-danger-light-8: #4d1512;
+  --el-color-danger-light-9: #330e0c;
+  --el-color-error: #ff453a;
+  --el-color-error-dark-2: #ff6b61;
+  --el-color-error-light-3: #cc3730;
+  --el-color-error-light-5: #992a25;
+  --el-color-error-light-7: #661c19;
+  --el-color-error-light-8: #4d1512;
+  --el-color-error-light-9: #330e0c;
+  --el-bg-color: #1c1c1e;
+  --el-bg-color-page: #000000;
+  --el-fill-color-light: #2c2c2e;
+  --el-fill-color-blank: #1c1c1e;
+  --el-fill-color: #2c2c2e;
+  --el-text-color-primary: #f5f5f7;
+  --el-text-color-regular: #d1d1d6;
+  --el-text-color-secondary: #98989f;
+  --el-text-color-placeholder: #636366;
+  --el-border-color: #38383a;
+  --el-border-color-light: #38383a;
+  --el-border-color-lighter: #2c2c2e;
+  --el-border-color-extra-light: #2c2c2e;
+  --el-mask-color: rgba(0, 0, 0, 0.7);
+}
+
+[data-theme='dark'] .el-overlay {
+  background-color: rgba(0, 0, 0, 0.5);
+}
+
+[data-theme='dark'] .el-dialog__headerbtn,
+[data-theme='dark'] .el-message-box__headerbtn {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme='dark'] .el-dialog__headerbtn:hover,
+[data-theme='dark'] .el-message-box__headerbtn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+[data-theme='dark'] .el-message-box__message p {
+  color: #d1d1d6;
+}
+
+[data-theme='dark'] .el-message-box__message {
+  color: #d1d1d6;
+}
+
+/* ===== 主题切换：圆形内容揭示层 =====
+   克隆的页面内容铺满视口，clip-path 圆形裁切随扩散动画增大，
+   圆内 = 目标主题内容，圆外 = 真实页面的旧主题内容。
+   作为滚动容器使用：scrollTop 与真实页面同步，sticky 头部才能对齐 */
+.theme-reveal {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  overflow: hidden;
+  scrollbar-width: none;
+  pointer-events: none;
+  will-change: clip-path;
+  /* iOS 式缓动：快速起步、平缓收尾 */
+  transition: clip-path 0.62s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.theme-reveal::-webkit-scrollbar {
+  display: none;
+}
+
+.theme-reveal > #theme-reveal-app {
+  min-height: 100%;
+}
+
+/* 切换瞬间冻结真实页面过渡，避免露出渐变半程态 */
+html.theme-lock,
+html.theme-lock *,
+html.theme-lock *::before,
+html.theme-lock *::after {
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-reveal {
+    transition: none;
+  }
+}
+
+/* ===== 主题切换：全局平滑过渡动画 ===== */
+html.theme-anim,
+html.theme-anim body,
+html.theme-anim #app,
+html.theme-anim *,
+html.theme-anim *::before,
+html.theme-anim *::after {
+  transition:
+    background-color 0.35s ease,
+    color 0.35s ease,
+    border-color 0.35s ease,
+    box-shadow 0.35s ease,
+    fill 0.35s ease !important;
+}
+
+/* ===== 主题切换按钮 ===== */
+.theme-toggle {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted-foreground);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  box-shadow: var(--shadow-sm);
+  transition:
+    transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
+    color 0.2s ease,
+    background-color 0.3s ease,
+    border-color 0.3s ease;
+}
+
+.theme-toggle:active {
+  transform: scale(0.88);
+}
+
+.theme-toggle:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.theme-toggle .toggle-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 图标旋转出场动画：切换到深色时月亮绕入，切回浅色时太阳绕入 */
+.theme-toggle.anim .toggle-icon {
+  animation: icon-spin 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes icon-spin {
+  0% {
+    transform: rotate(-120deg) scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    transform: rotate(12deg) scale(1.12);
+    opacity: 1;
+  }
+  100% {
+    transform: rotate(0deg) scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-toggle .toggle-icon {
+    animation: none !important;
+    transition: none !important;
   }
 }

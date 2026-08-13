@@ -501,7 +501,7 @@ function copyCode() {
   position: fixed;
   inset: 0;
   z-index: 2900;
-  background: rgba(29, 29, 31, 0.05);
+  background: var(--mask-bg, rgba(29, 29, 31, 0.05));
 }
 
 .radial-menu {
@@ -547,7 +547,7 @@ function copyCode() {
   font-size: 12px;
   font-weight: 500;
   color: var(--foreground);
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--glass-strong);
   border-radius: 999px;
   padding: 2px 8px;
   white-space: nowrap;

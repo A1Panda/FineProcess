@@ -1,5 +1,9 @@
 <template>
   <div class="login-page">
+    <!-- 右上角主题切换 -->
+    <button class="theme-toggle login-theme-toggle" aria-label="切换深色模式" :class="{ anim: themeAnim }" @click="onToggleTheme">
+      <span class="toggle-icon"><el-icon :size="18"><Moon v-if="isDark" /><Sunny v-else /></el-icon></span>
+    </button>
     <div class="login-inner">
       <!-- 品牌区 -->
       <div class="brand">
@@ -67,9 +71,23 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../stores/auth'
 import logoUrl from '../assets/logo-md.jpg'
+import { isDark as getDark, toggleTheme } from '../utils/theme'
 
 const router = useRouter()
 const auth = useAuthStore()
+
+/* ===== 主题切换 ===== */
+const isDark = ref(getDark())
+const themeAnim = ref(false)
+
+function onToggleTheme(e) {
+  themeAnim.value = false
+  requestAnimationFrame(() => {
+    themeAnim.value = true
+  })
+  window.setTimeout(() => (themeAnim.value = false), 500)
+  isDark.value = toggleTheme(e?.currentTarget)
+}
 
 const form = ref({ username: '', password: '' })
 const loading = ref(false)
@@ -133,6 +151,15 @@ onMounted(() => {
   display: flex;
   justify-content: center;
   padding: 48px 24px 32px;
+  position: relative;
+}
+
+/* 右上角主题切换按钮 */
+.login-theme-toggle {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 10;
 }
 
 .login-inner {
@@ -153,7 +180,7 @@ onMounted(() => {
   height: 76px;
   margin: 0 auto;
   border-radius: 20px;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--border);
   display: flex;
   align-items: center;
