@@ -440,8 +440,16 @@ body,
   max-height: 45vh;
 }
 
-/* 隐藏 popper 箭头，保持圆角干净 */
-.el-select-dropdown .el-popper__arrow {
+/* popper 容器：去掉自带背景/边框/阴影，让内部面板的毛玻璃完全接管 */
+.el-select__popper.el-popper {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0;
+}
+
+/* 隐藏 popper 箭头（箭头是容器子元素，顶在面板边缘形成“多余一块”） */
+.el-select__popper .el-popper__arrow {
   display: none;
 }
 
@@ -478,11 +486,6 @@ body,
   padding: 16px;
   font-size: 13px;
   color: var(--muted-foreground);
-}
-
-/* filterable 时面板内搜索框 */
-.el-select-dropdown__filter .el-input__wrapper {
-  border-radius: 10px;
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
@@ -530,6 +533,7 @@ body,
   --el-color-error-light-9: #330e0c;
   --el-bg-color: #1c1c1e;
   --el-bg-color-page: #000000;
+  --el-bg-color-overlay: #1c1c1e;
   --el-fill-color-light: #2c2c2e;
   --el-fill-color-blank: #1c1c1e;
   --el-fill-color: #2c2c2e;
