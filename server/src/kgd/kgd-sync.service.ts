@@ -99,7 +99,7 @@ export class KgdSyncService implements OnModuleInit {
     try {
       await Promise.all([
         this.syncBills(forceFull),
-        this.syncTasks(forceFull),
+        this.syncTasks(forceFull, reportWindowDays),
         this.syncReportRecords(forceFull, reportWindowDays),
         this.syncUsers(),
       ]);
@@ -223,9 +223,12 @@ export class KgdSyncService implements OnModuleInit {
   /**
    * 生产任务滚动同步：活动状态（未开始+进行中+已暂停）增量为主 + 定期全量对账
    * - 增量：只拉 TASK_ACTIVE_STATUSES 状态，请求量从 40+ 页降到 3 页
+   * - 近 N 天已完成：快工单内报满量会【自动】把任务置为已完成（status=3），
+   *   活动状态增量拉不到，若不补拉本地会一直停留旧状态；
+   *   用 updated_at 窗口精准补拉 [当前-N天, 当前] 的已完成任务（实测仅 1 页 37 条）
    * - 全量对账：首次 / 距上次对账超过 TASK_FULL_RECONCILE_SEC / 手动刷新强制时执行，拉全量并清理远程已删除记录、刷新已完成历史
    */
-  private async syncTasks(forceFull = false) {
+  private async syncTasks(forceFull = false, reportWindowDays = 0) {
     const start = Date.now();
     const now = fmtDateTime(new Date());
     const lastFull = (await this.syncMeta.findOneBy({ key: 'task_full_sync_at' }))?.value || null;
@@ -264,6 +267,15 @@ export class KgdSyncService implements OnModuleInit {
       await this.upsertTasks(all);
       done += all.length;
     }
+    // 补拉近 N 天 updated_at 的已完成任务：快工单报满量自动完成（status=3），
+    // 活动状态增量拉不到，若不补拉本地会一直停留旧状态（每日全量对账兜底）。
+    // 用 updated_at 窗口精准补拉，1 页请求即可（实测近 3 天仅 37 条）
+    const doneDays = reportWindowDays > 0 ? reportWindowDays : 3;
+    const { all: doneTasks } = await this.fetchTasks(3, minusDays(now, doneDays));
+    if (doneTasks.length) {
+      await this.upsertTasks(doneTasks);
+      done += doneTasks.length;
+    }
     // 增量：补齐新下订单的真实工艺顺序（仅校准本地 craft_seq 为空的活动任务，
     // 保证新单即使被拖过工序也能与公版一致；存量单由每日全量对账校准）
     try {
@@ -287,7 +299,7 @@ export class KgdSyncService implements OnModuleInit {
     } catch (e) {
       this.logger.warn(`新单工艺顺序补齐失败：${(e as Error).message}`);
     }
-    this.logger.log(`任务同步完成(活动)：${done} 条，耗时 ${Date.now() - start}ms`);
+    this.logger.log(`任务同步完成(活动+近${doneDays}天已完成)：${done} 条，耗时 ${Date.now() - start}ms`);
   }
 
   /** 批量将 taskId → order_number 写入 craft_seq（CASE WHEN，1000 条一批） */
@@ -305,9 +317,14 @@ export class KgdSyncService implements OnModuleInit {
     }
   }
 
-  /** 分页拉取生产任务（status 为空即全量），并发拉取剩余页 */
-  private async fetchTasks(status?: number): Promise<{ all: any[]; total: number }> {
-    const params = status !== undefined ? { status } : {};
+  /** 分页拉取生产任务（status 为空即全量；updatedAtStart 非空时按 updated_at 时间窗口拉取），并发拉取剩余页 */
+  private async fetchTasks(status?: number, updatedAtStart?: string): Promise<{ all: any[]; total: number }> {
+    const params: Record<string, unknown> = {};
+    if (status !== undefined) params.status = status;
+    if (updatedAtStart) {
+      params.updated_at_start = updatedAtStart;
+      params.updated_at_end = fmtDateTime(new Date());
+    }
     const first = await this.kgdClient.listTasks({ pageNo: 1, pageSize: PAGE_SIZE, ...params });
     const firstList = first.data ?? [];
     const total = Math.min(first.count ?? firstList.length, 10_000);
