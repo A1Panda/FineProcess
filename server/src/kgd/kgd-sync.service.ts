@@ -363,6 +363,7 @@ export class KgdSyncService implements OnModuleInit {
    * - 增量：以 kgd_sync_meta.report_last_sync 为游标，仅拉 [游标-60s, 当前时间] 窗口，省 OpenAPI 配额（定时轮询）
    * - 近 N 天：手动刷新短按时覆盖 [当前-N天, 当前] 窗口，完善近期被修改 / 漏同步的报工记录
    * - 全量对账：首次 / 距上次对账超过 REPORT_FULL_RECONCILE_SEC / 手动刷新长按强制时执行，全量拉取并清理本地已存在但远程已删除的记录
+   *   （⚠️ 唯一清理纯同步记录的地方：报工列表接口不含时间戳，窗口路径无法安全判断记录归属，见 incrementalSyncReportRecords）
    * - 本地已有（reportId 匹配）→ 更新业务字段；不写入 reportTime，避免覆盖本地报工时间
    * - 本地 reportId 为空的行按 加工单+工序+用户+数量 匹配补全 ID 再更新
    */
@@ -411,11 +412,17 @@ export class KgdSyncService implements OnModuleInit {
   }
 
   /** 按 [from, now] 窗口拉取 + upsert + 推进游标（from 为游标或近 N 天起点）
-   *  cleanupWindow=true（手动短按近N天刷新）时额外做删除对账：
-   *  清理本地 reportId 非空、报工时间在窗口内、但远程已不存在的记录（如快工单被手动删除的记录） */
+   *  cleanupWindow=true（手动短按近 N 天刷新）时额外做删除对账。
+   *  ⚠️ 快工单报工列表接口返回的记录【不含时间戳字段】：
+   *  - 纯同步记录（本地 report_time 为空）无法判断归属窗口，窗口路径绝不清理它们，
+   *    否则会把窗口外的历史同步记录全部误删（历史 Bug：一次短按刷新删掉 3555 条）。
+   *  - 远程已删除的同步记录统一由全量对账（每日 / 长按刷新）兜底清理。
+   *  - 窗口路径只清理「本地报工时间落在本次拉取窗口内、却未被窗口拉到」的记录，
+   *    此时该记录必定已在远程被删除（若远程仍在，窗口拉取必然返回它）。 */
   private async incrementalSyncReportRecords(now: string, from: string, cleanupWindow = false) {
+    const fetchFrom = minusSeconds(from, REPORT_OVERLAP_SEC);
     const { all, total } = await this.fetchReportRecords({
-      report_time_start: minusSeconds(from, REPORT_OVERLAP_SEC),
+      report_time_start: fetchFrom,
       report_time_end: now,
     });
     await this.backfillNullReportIds(all);
@@ -423,18 +430,17 @@ export class KgdSyncService implements OnModuleInit {
     if (cleanupWindow && total < 10_000) {
       const ids = all.map((r: any) => r.id).filter((id: any) => id != null);
       if (ids.length) {
-        // 清理本地已失效记录：reportId 非空但本次窗口未拉到。
-        // report_time 为空的记录（纯同步 upsert 进来的，无本地报工时间）也纳入清理，
-        // 否则"快工单已删除的记录"在短按刷新时无法同步消失。
+        // 只删本地报工时间落在本次拉取窗口内、却未在窗口数据中出现的记录；
+        // 字符串比较对 'YYYY-MM-DD HH:mm:ss' 定长时间安全
         const del = await this.reportCache
           .createQueryBuilder()
           .delete()
           .where(
-            "(report_time >= :from OR report_time = '' OR report_time IS NULL) AND report_id IS NOT NULL AND report_id NOT IN (:...ids)",
-            { from: from + '', ids },
+            'report_id IS NOT NULL AND report_id NOT IN (:...ids) AND report_time >= :fetchFrom AND report_time <= :now',
+            { ids, fetchFrom, now },
           )
           .execute();
-        if (del.affected) this.logger.log(`报工增量对账完成：删除本地已失效 ${del.affected} 条`);
+        if (del.affected) this.logger.log(`报工窗口对账完成：删除本地已失效 ${del.affected} 条`);
       }
     }
     await this.syncMeta.upsert({ key: 'report_last_sync', value: now }, ['key']);
