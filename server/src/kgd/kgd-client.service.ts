@@ -1,7 +1,12 @@
-﻿import { Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance } from 'axios';
+import * as crypto from 'crypto';
 import { KgdAuthService } from './kgd-auth.service';
+
+/** 快工单公版 Web 接口请求签名固定盐（前端 bundle 中提取） */
+const WEB_SIGN_SALT = '81ad0be7fd53914f8cf8193c1886f635';
+const WEB_CHANNEL = 1; // 公版 WEB 端 channel
 
 /** 快工单 OpenAPI 统一封装：自动注入 X-TOKEN，集中处理返回结构 */
 @Injectable()
@@ -141,6 +146,71 @@ export class KgdClientService {
   /** 编辑加工单（Body 结构见快工单开放接口文档：id/num/craft_list 等） */
   editProduceBill(payload: Record<string, unknown>) {
     return this.post<any[]>('/open_api/produce_bill/edit', payload);
+  }
+
+  // ===== 公版 Web 系统（真实工艺顺序 order_number 数据源） =====
+
+  /** 公版请求签名：MD5(时间戳 + 固定盐) */
+  private webSign(timestamp: string): string {
+    return crypto.createHash('md5').update(timestamp + WEB_SIGN_SALT).digest('hex');
+  }
+
+  /** 公版系统登录（用户配置的公版账号），返回 web_token + enterprise_id */
+  private async loginWeb(): Promise<{ token: string; enterpriseId: string }> {
+    const mobile = this.config.get<string>('kgd.webMobile') ?? '';
+    const pwd = this.config.get<string>('kgd.webPassword') ?? '';
+    if (!mobile || !pwd) throw new Error('未配置公版系统账号（KGD_WEB_MOBILE / KGD_WEB_PASSWORD）');
+    const ts = String(Math.floor(Date.now() / 1000));
+    const resp = await this.http.post('/api/user/login_by_pwd', {
+      mobile,
+      pwd,
+      channel: WEB_CHANNEL,
+      timestamp: ts,
+      sign: this.webSign(ts),
+      token: '',
+      enterprise_id: '',
+    });
+    const body = resp.data;
+    if (!body?.success || !body.data?.web_token) {
+      throw new Error(`公版系统登录失败: ${body?.msg ?? '未知错误'}`);
+    }
+    return { token: body.data.web_token, enterpriseId: String(body.data.enterprise_id) };
+  }
+
+  /**
+   * 公版分页拉取全部加工单，解析每单 craft_list 的工序顺序。
+   * 返回 Map<taskId, orderNumber>（order_number 即快工单真实工艺顺序，用户可拖动调整；
+   * OpenAPI 不返回该字段，其数组顺序按 id 升序，不可作为顺序依据）
+   */
+  async fetchWebCraftOrders(): Promise<Map<number, number>> {
+    const { token, enterpriseId } = await this.loginWeb();
+    const orders = new Map<number, number>();
+    const PAGE = 200;
+    let page = 1;
+    for (;;) {
+      const ts = String(Math.floor(Date.now() / 1000));
+      const resp = await this.http.post('/api/produce_bill/list', {
+        pageNo: page,
+        pageSize: PAGE,
+        timestamp: ts,
+        sign: this.webSign(ts),
+        channel: WEB_CHANNEL,
+        token,
+        enterprise_id: enterpriseId,
+      });
+      const body = resp.data;
+      if (!body?.success) throw new Error(`公版加工单列表失败: ${body?.msg ?? '未知错误'}`);
+      const rows: any[] = body.data ?? [];
+      for (const b of rows) {
+        for (const c of b.craft_list ?? []) {
+          if (c.id != null && c.order_number != null) orders.set(c.id, c.order_number);
+        }
+      }
+      const count = body.count ?? rows.length;
+      if (rows.length < PAGE || page * PAGE >= count) break;
+      page++;
+    }
+    return orders;
   }
 
   // ===== 用户 =====

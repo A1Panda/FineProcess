@@ -182,7 +182,7 @@ export class TasksService {
     return { list, total, page: pageNum, pageSize: size };
   }
 
-  /** 批量加载加工单的完整工序链（同单按 taskId 升序 = 工艺顺序） */
+  /** 批量加载加工单的完整工序链（同单按工艺编码升序 = 工艺顺序，无编码按 taskId 兜底） */
   private async loadChains(billCodes: string[]) {
     const map = new Map<string, KgdTaskCache[]>();
     for (let i = 0; i < billCodes.length; i += 500) {
@@ -193,6 +193,8 @@ export class TasksService {
           't.taskId',
           't.billCode',
           't.craftName',
+          't.craftCode',
+          't.craftSeq',
           't.status',
           't.statusName',
           't.num',
@@ -207,7 +209,12 @@ export class TasksService {
         map.set(r.billCode, arr);
       }
     }
-    for (const arr of map.values()) arr.sort((a, b) => Number(a.taskId) - Number(b.taskId));
+    for (const arr of map.values())
+      arr.sort((a, b) => {
+        const sa = a.craftSeq != null ? Number(a.craftSeq) : Number(a.taskId);
+        const sb = b.craftSeq != null ? Number(b.craftSeq) : Number(b.taskId);
+        return sa - sb;
+      });
     return map;
   }
 

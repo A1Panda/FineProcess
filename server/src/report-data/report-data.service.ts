@@ -228,6 +228,8 @@ export class ReportDataService {
             't.taskId',
             't.billCode',
             't.craftName',
+            't.craftCode',
+            't.craftSeq',
             't.status',
             't.statusName',
             't.num',
@@ -243,7 +245,12 @@ export class ReportDataService {
         }
       }
     }
-    for (const arr of byBill.values()) arr.sort((a, b) => Number(a.taskId) - Number(b.taskId));
+    for (const arr of byBill.values())
+      arr.sort((a, b) => {
+        const sa = a.craftSeq != null ? Number(a.craftSeq) : Number(a.taskId);
+        const sb = b.craftSeq != null ? Number(b.craftSeq) : Number(b.taskId);
+        return sa - sb;
+      });
 
     return bills.map((b) => {
       const chain = byBill.get(b.code) ?? [];

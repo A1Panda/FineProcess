@@ -5,6 +5,9 @@ export interface AppConfig {
     apiKey: string;
     apiSecret: string;
     username: string;
+    /** 公版 Web 系统登录凭据（用于获取真实工艺顺序 order_number） */
+    webMobile: string;
+    webPassword: string;
   };
   db: {
     host: string;
@@ -27,6 +30,8 @@ export default (): AppConfig => ({
     apiKey: process.env.KGD_API_KEY ?? '',
     apiSecret: process.env.KGD_API_SECRET ?? '',
     username: process.env.KGD_USERNAME ?? '',
+    webMobile: process.env.KGD_WEB_MOBILE ?? '',
+    webPassword: process.env.KGD_WEB_PASSWORD ?? '',
   },
   db: {
     host: process.env.DB_HOST ?? 'localhost',

@@ -21,6 +21,10 @@ export class KgdTaskCache {
   @Column({ name: 'craft_code', type: 'varchar', length: 64, nullable: true })
   craftCode: string | null;
 
+  /** 工艺顺序：全量同步时记录快工单接口返回数组顺序（用户调整后的真实排列），增量同步不更新 */
+  @Column({ name: 'craft_seq', type: 'int', nullable: true })
+  craftSeq: number | null;
+
   @Column({ name: 'goods_name', length: 255, default: '' })
   goodsName: string;
 

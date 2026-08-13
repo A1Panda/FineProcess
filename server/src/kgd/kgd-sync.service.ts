@@ -234,6 +234,25 @@ export class KgdSyncService implements OnModuleInit {
     if (fullDue) {
       const { all, total } = await this.fetchTasks();
       await this.upsertTasks(all);
+      // 全量：用公版 order_number 校准真实工艺顺序（OpenAPI 返回按 id 升序，非真实顺序；
+      // 快工单真实顺序由可拖动的 order_number 决定，需登录公版 Web 接口获取）
+      try {
+        const orders = await this.kgdClient.fetchWebCraftOrders();
+        // 批量 CASE 更新（4060 条逐条 UPDATE 实测约 70s，批量约 1s）
+        const entries = Array.from(orders.entries());
+        const CHUNK = 1000;
+        for (let i = 0; i < entries.length; i += CHUNK) {
+          const chunk = entries.slice(i, i + CHUNK);
+          const cases = chunk.map(([taskId, seq]) => `WHEN ${Number(taskId)} THEN ${Number(seq)}`).join(' ');
+          const ids = chunk.map(([taskId]) => Number(taskId)).join(',');
+          await this.tasks.query(
+            `UPDATE kgd_task_cache SET craft_seq = CASE task_id ${cases} ELSE craft_seq END WHERE task_id IN (${ids})`,
+          );
+        }
+        this.logger.log(`工艺顺序校准完成：更新 ${entries.length} 条（来源：公版 order_number）`);
+      } catch (e) {
+        this.logger.warn(`工艺顺序校准失败：${(e as Error).message}`);
+      }
       // 全量未截断时才清理本地已删除记录，避免误删
       if (total < 10_000 && all.length) {
         const ids = all.map((t: any) => t.id).filter((id: any) => id != null);
@@ -278,6 +297,7 @@ export class KgdSyncService implements OnModuleInit {
     return { all, total };
   }
 
+  /** 写入任务缓存（增量/全量共用；craft_seq 由全量分支用公版 order_number 单独校准） */
   private async upsertTasks(all: any[]) {
     if (!all.length) return;
     const rows = all.map((t: any) => ({
