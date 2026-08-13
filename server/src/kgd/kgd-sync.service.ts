@@ -238,18 +238,8 @@ export class KgdSyncService implements OnModuleInit {
       // 快工单真实顺序由可拖动的 order_number 决定，需登录公版 Web 接口获取）
       try {
         const orders = await this.kgdClient.fetchWebCraftOrders();
-        // 批量 CASE 更新（4060 条逐条 UPDATE 实测约 70s，批量约 1s）
-        const entries = Array.from(orders.entries());
-        const CHUNK = 1000;
-        for (let i = 0; i < entries.length; i += CHUNK) {
-          const chunk = entries.slice(i, i + CHUNK);
-          const cases = chunk.map(([taskId, seq]) => `WHEN ${Number(taskId)} THEN ${Number(seq)}`).join(' ');
-          const ids = chunk.map(([taskId]) => Number(taskId)).join(',');
-          await this.tasks.query(
-            `UPDATE kgd_task_cache SET craft_seq = CASE task_id ${cases} ELSE craft_seq END WHERE task_id IN (${ids})`,
-          );
-        }
-        this.logger.log(`工艺顺序校准完成：更新 ${entries.length} 条（来源：公版 order_number）`);
+        await this.applyCraftSeq(orders);
+        this.logger.log(`工艺顺序校准完成：更新 ${orders.size} 条（来源：公版 order_number）`);
       } catch (e) {
         this.logger.warn(`工艺顺序校准失败：${(e as Error).message}`);
       }
@@ -274,7 +264,45 @@ export class KgdSyncService implements OnModuleInit {
       await this.upsertTasks(all);
       done += all.length;
     }
+    // 增量：补齐新下订单的真实工艺顺序（仅校准本地 craft_seq 为空的活动任务，
+    // 保证新单即使被拖过工序也能与公版一致；存量单由每日全量对账校准）
+    try {
+      const pending = await this.tasks
+        .createQueryBuilder()
+        .select('t.taskId', 'taskId')
+        .from(KgdTaskCache, 't')
+        .where('t.craft_seq IS NULL')
+        .andWhere('t.status IN (:...st)', { st: TASK_ACTIVE_STATUSES })
+        .getRawMany<{ taskId: number }>();
+      if (pending.length) {
+        const orders = await this.kgdClient.fetchWebCraftOrders();
+        const need = new Map<number, number>();
+        for (const p of pending) {
+          const seq = orders.get(Number(p.taskId));
+          if (seq != null) need.set(Number(p.taskId), seq);
+        }
+        await this.applyCraftSeq(need);
+        this.logger.log(`新单工艺顺序补齐：${need.size} 条（来源：公版 order_number）`);
+      }
+    } catch (e) {
+      this.logger.warn(`新单工艺顺序补齐失败：${(e as Error).message}`);
+    }
     this.logger.log(`任务同步完成(活动)：${done} 条，耗时 ${Date.now() - start}ms`);
+  }
+
+  /** 批量将 taskId → order_number 写入 craft_seq（CASE WHEN，1000 条一批） */
+  private async applyCraftSeq(orders: Map<number, number>) {
+    if (!orders.size) return;
+    const entries = Array.from(orders.entries());
+    const CHUNK = 1000;
+    for (let i = 0; i < entries.length; i += CHUNK) {
+      const chunk = entries.slice(i, i + CHUNK);
+      const cases = chunk.map(([taskId, seq]) => `WHEN ${Number(taskId)} THEN ${Number(seq)}`).join(' ');
+      const ids = chunk.map(([taskId]) => Number(taskId)).join(',');
+      await this.tasks.query(
+        `UPDATE kgd_task_cache SET craft_seq = CASE task_id ${cases} ELSE craft_seq END WHERE task_id IN (${ids})`,
+      );
+    }
   }
 
   /** 分页拉取生产任务（status 为空即全量），并发拉取剩余页 */

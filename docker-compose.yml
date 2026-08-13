@@ -37,6 +37,9 @@ services:
       KGD_API_KEY: ${KGD_API_KEY}
       KGD_API_SECRET: ${KGD_API_SECRET}
       KGD_USERNAME: ${KGD_USERNAME}
+      # 公版 Web 系统登录凭据（获取真实工艺顺序 order_number）
+      KGD_WEB_MOBILE: ${KGD_WEB_MOBILE}
+      KGD_WEB_PASSWORD: ${KGD_WEB_PASSWORD}
       # 数据库连接（指向 compose 内的 mysql 服务）
       DB_HOST: mysql
       DB_PORT: 3306

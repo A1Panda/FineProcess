@@ -155,8 +155,12 @@ export class KgdClientService {
     return crypto.createHash('md5').update(timestamp + WEB_SIGN_SALT).digest('hex');
   }
 
-  /** 公版系统登录（用户配置的公版账号），返回 web_token + enterprise_id */
+  /** 公版系统登录（用户配置的公版账号），返回 web_token + enterprise_id（缓存 30 分钟） */
+  private webAuth: { token: string; enterpriseId: string; at: number } | null = null;
   private async loginWeb(): Promise<{ token: string; enterpriseId: string }> {
+    if (this.webAuth && Date.now() - this.webAuth.at < 30 * 60 * 1000) {
+      return this.webAuth;
+    }
     const mobile = this.config.get<string>('kgd.webMobile') ?? '';
     const pwd = this.config.get<string>('kgd.webPassword') ?? '';
     if (!mobile || !pwd) throw new Error('未配置公版系统账号（KGD_WEB_MOBILE / KGD_WEB_PASSWORD）');
@@ -174,7 +178,8 @@ export class KgdClientService {
     if (!body?.success || !body.data?.web_token) {
       throw new Error(`公版系统登录失败: ${body?.msg ?? '未知错误'}`);
     }
-    return { token: body.data.web_token, enterpriseId: String(body.data.enterprise_id) };
+    this.webAuth = { token: body.data.web_token, enterpriseId: String(body.data.enterprise_id), at: Date.now() };
+    return this.webAuth;
   }
 
   /**
