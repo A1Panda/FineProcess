@@ -501,19 +501,6 @@ export class ReportDataService {
       return true;
     });
 
-    // 按编号排序：SP 编号（自带批次日期）优先且倒序 = 新批次在前；非 SP 编号、空编号排最后
-    list.sort((a, b) => {
-      const ca = a.code ?? '';
-      const cb = b.code ?? '';
-      const spa = ca.startsWith('SP');
-      const spb = cb.startsWith('SP');
-      if (spa !== spb) return spa ? -1 : 1;
-      if (!ca && !cb) return 0;
-      if (!ca) return 1;
-      if (!cb) return -1;
-      return ca < cb ? 1 : -1; // 字符串倒序
-    });
-
     return list.map((g) => ({
       id: g.goodsId,
       code: g.code ?? '',
