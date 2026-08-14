@@ -20,7 +20,7 @@ const REPORT_RECENT_DAYS = 3; // 手动刷新（短按增量）时报工覆盖�
 const BILL_FULL_RECONCILE_SEC = 24 * 60 * 60; // 加工单全量对账间隔：每天一次（长按刷新可强制触发）
 const TASK_FULL_RECONCILE_SEC = 24 * 60 * 60; // 任务全量对账间隔：每天一次（长按刷新可强制触发）
 /** 滚动同步只拉活动状态（已完成/已取消的历史数据由全量对账刷新）：加工单 未开始(1)+生产中(2) */
-const BILL_ACTIVE_STATUSES = [1, 2];
+const BILL_ACTIVE_STATUSES = [1, 2, 5]; // 加工单活动状态：1=未开始 2=进行中 5=已暂停（5 纳入增量，缓存才能及时反映暂停；前端仍按 1,2 过滤显示）
 /** 任务活动状态：未开始(1)+进行中(2)+已暂停(4) */
 const TASK_ACTIVE_STATUSES = [1, 2, 4];
 
@@ -81,11 +81,23 @@ export class KgdSyncService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
+    // 自动定时同步（KGD_AUTO_SYNC=false 的开发环境只保留手动按钮刷新，避免与生产环境同时拉取快工单打架）
+    if (!this.config.get<boolean>('autoSync')) {
+      this.logger.log('自动定时同步已禁用（KGD_AUTO_SYNC=false），仅保留手动刷新（短按增量 / 长按全量）');
+      return;
+    }
     // 延迟到凭证就绪后再同步
     setTimeout(() => this.syncNow(), 8_000);
   }
 
+  /** 定时自动同步（每 5 分钟）。仅定时器触发，受 KGD_AUTO_SYNC 开关控制；手动刷新 / 写操作后的 requestSync 不受影响 */
   @Interval(SYNC_INTERVAL)
+  async autoSync(): Promise<void> {
+    if (!this.config.get<boolean>('autoSync')) return;
+    await this.syncNow();
+  }
+
+  /** 触发一次即时同步（手动刷新 / 写操作后 / 定时器调用，可等待完成） */
   syncNow(forceFull = false, reportWindowDays = 0): Promise<void> {
     if (this.currentSync) return this.currentSync;
     this.currentSync = this.doSync(forceFull, reportWindowDays).finally(() => {
@@ -144,8 +156,9 @@ export class KgdSyncService implements OnModuleInit {
   }
 
   /**
-   * 加工单滚动同步：活动状态（未开始+生产中）增量为主 + 定期全量对账
-   * - 增量：只拉 BILL_ACTIVE_STATUSES 状态，请求量从 40+ 页降到 2 页，毫秒级完成
+   * 加工单滚动同步：活动状态（未开始+生产中+已暂停）增量为主 + 定期全量对账
+   * - 增量：只拉 BILL_ACTIVE_STATUSES 状态，请求量从 40+ 页降到 3 页，毫秒级完成
+   *   （含 5=已暂停：快工单暂停的单若不入增量，本地缓存将停留在旧"进行中"状态，前端刷新仍显示）
    * - 全量对账：首次 / 距上次对账超过 BILL_FULL_RECONCILE_SEC / 手动刷新强制时执行，拉全量并清理远程已删除记录、刷新已完成/已取消历史
    */
   private async syncBills(forceFull = false) {

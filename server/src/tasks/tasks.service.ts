@@ -109,6 +109,11 @@ export class TasksService {
     // 1) 基础条件查询（不 join、不分页），仅取轻量字段用于链判断
     const base = this.taskCache.createQueryBuilder('t');
     if (!all) base.andWhere('t.reportableUserNames LIKE :name', { name: `%${user.name}%` });
+    // 排除加工单已暂停（快工单 status=5）的任务：快工单暂停加工单不会暂停其任务（任务仍是 1/2），
+    // 需按加工单状态过滤，否则暂停单会一直显示在未开工/进行中列表
+    base
+      .leftJoin(KgdBillCache, 'b', 'b.code = t.billCode')
+      .andWhere('(b.status IS NULL OR b.status <> 5)');
     // status 支持多值（如 '1,2' 表示未开始+进行中），单值时保持精确匹配
     if (options.status && Array.isArray(options.status)) {
       base.andWhere(
@@ -304,11 +309,13 @@ export class TasksService {
   /** 首页统计：各状态数量 / 各工序未完成数量 / 编程未开始加工单数（与任务列表口径一致，排除被锁定的后序工序） */
   async getSummary(user: JwtPayload) {
     const userLike = `%${user.name}%`;
-    // 取当前用户所有任务的轻量字段（含链判断所需信息）
+    // 取当前用户所有任务的轻量字段（含链判断所需信息）；排除加工单已暂停（status=5）的任务，与任务列表口径一致
     const rows = await this.taskCache
       .createQueryBuilder('t')
+      .leftJoin(KgdBillCache, 'b', 'b.code = t.billCode')
       .select(['t.taskId', 't.billCode', 't.craftName', 't.status', 't.validNum', 't.wasteNum'])
       .where('t.reportableUserNames LIKE :name', { name: userLike })
+      .andWhere('(b.status IS NULL OR b.status <> 5)')
       .getMany();
     const locked = await this.computeLockedIds(rows);
 

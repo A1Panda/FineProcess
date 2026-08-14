@@ -21,6 +21,8 @@ export class KgdAuthService implements OnModuleInit {
   private refreshing = false;
   /** 正在进行的刷新任务（供外部等待复用，避免并发刷新） */
   private refreshPromise: Promise<void> | null = null;
+  /** 登录返回的用户会话信息（id/name/real_name/team/role），供开放接口连接测试使用 */
+  private sessionInfo: Record<string, unknown> | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -88,6 +90,7 @@ export class KgdAuthService implements OnModuleInit {
         throw new Error(`快工单登录失败: ${JSON.stringify(loginResp.data)}`);
       }
       this.userToken = loginResp.data.data.token as string;
+      this.sessionInfo = loginResp.data.data as Record<string, unknown>;
 
       // 持久化
       await this.tokens.upsert(
@@ -118,5 +121,36 @@ export class KgdAuthService implements OnModuleInit {
 
   getAccessToken(): string {
     return this.accessToken;
+  }
+
+  /** 会话信息缓存（无则返回 null） */
+  getSessionInfo(): Record<string, unknown> | null {
+    return this.sessionInfo;
+  }
+
+  /**
+   * 确保会话信息可用：有缓存直接返回；否则用当前凭证现拉一次快工单登录信息并缓存。
+   * 供开放接口连接测试展示真实账号/团队/企业信息。
+   */
+  async ensureSessionInfo(): Promise<Record<string, unknown> | null> {
+    if (this.sessionInfo) return this.sessionInfo;
+    if (!this.accessToken) return null;
+    const { baseUrl, username } = this.config.get('kgd');
+    try {
+      const loginResp = await axios.post(
+        `${baseUrl}/open_api/user/login`,
+        { access_token: this.accessToken, username },
+        { timeout: 15_000 },
+      );
+      if (!loginResp.data?.success) {
+        this.logger.warn(`拉取会话信息失败: ${loginResp.data?.msg ?? JSON.stringify(loginResp.data)}`);
+        return null;
+      }
+      this.sessionInfo = loginResp.data.data as Record<string, unknown>;
+      return this.sessionInfo;
+    } catch (e) {
+      this.logger.warn(`拉取会话信息失败: ${(e as Error).message}`);
+      return null;
+    }
   }
 }

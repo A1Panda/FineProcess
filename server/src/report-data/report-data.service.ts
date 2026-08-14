@@ -284,6 +284,54 @@ export class ReportDataService {
     });
   }
 
+  // ===== 工序顺序（真实工艺顺序，来源：公版 Web 接口 order_number 校准） =====
+
+  /**
+   * 加工单工序顺序：按公版 Web 接口 order_number 校准后的 craft_seq 排序。
+   * 读本地缓存（kgd_task_cache），查询前先即时同步保证新鲜。
+   * 返回 [{ code, crafts: [{ taskId, craftName, order, status, statusName, num, validNum, wasteNum, unitName, endTime }] }]
+   */
+  async getCraftOrders(codes: string[]) {
+    const codeList = codes.map((c) => c.trim()).filter(Boolean);
+    if (!codeList.length) return [];
+    try {
+      await this.sync.requestSync();
+    } catch (e) {
+      this.logger.warn(`查询工序顺序前同步失败，使用现有缓存: ${(e as Error).message}`);
+    }
+    const rows = await this.tasks.find({ where: { billCode: In(codeList) } });
+    const byCode = new Map<string, KgdTaskCache[]>();
+    for (const t of rows) {
+      const arr = byCode.get(t.billCode) ?? [];
+      arr.push(t);
+      byCode.set(t.billCode, arr);
+    }
+    return codeList
+      .filter((c) => byCode.has(c))
+      .map((c) => {
+        const crafts = byCode
+          .get(c)!
+          .map((t) => ({
+            taskId: t.taskId,
+            craftName: t.craftName,
+            order: t.craftSeq != null ? Number(t.craftSeq) : null,
+            status: Number(t.status),
+            statusName: t.statusName,
+            num: Number(t.num) || 0,
+            validNum: Number(t.validNum) || 0,
+            wasteNum: Number(t.wasteNum) || 0,
+            unitName: t.unitName,
+            endTime: t.endTime,
+          }))
+          .sort((a, b) => {
+            const sa = a.order != null ? a.order : a.taskId;
+            const sb = b.order != null ? b.order : b.taskId;
+            return sa - sb;
+          });
+        return { code: c, crafts };
+      });
+  }
+
   // ===== 加工单编辑 =====
 
   /** 编辑加工单（透传快工单 /open_api/produce_bill/edit，字段校验由快工单侧完成） */
@@ -401,5 +449,22 @@ export class ReportDataService {
       /** 扩展字段 key-value 映射，方便直接取值（如 fieldValues['HT图号']） */
       fieldValues: Object.fromEntries((g.fieldValueList ?? []).map((f: any) => [f.name, f.value ?? ''])),
     }));
+  }
+
+  // ===== 浏览器扩展透传（快工单原样数据） =====
+
+  /** 客户列表（透传 /open_api/customer/list，返回 { data, count }） */
+  listCustomers(params: Record<string, unknown> = {}) {
+    return this.kgdClient.listCustomers(params);
+  }
+
+  /** 商品列表（透传 /open_api/goods/list，返回 { data, count }；与上方 getGoods 的本地包装查询区分） */
+  listGoods(params: Record<string, unknown> = {}) {
+    return this.kgdClient.listGoods(params);
+  }
+
+  /** 创建合同（透传 /open_api/customer_contract/add） */
+  addContract(payload: Record<string, unknown>) {
+    return this.kgdClient.addContract(payload);
   }
 }

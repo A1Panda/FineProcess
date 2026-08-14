@@ -19,8 +19,10 @@ export interface AppConfig {
   jwtSecret: string;
   /** 外部人员每日编码服务器（编码考勤系统） */
   externalEmployeeApi: string;
-  /** 机器人插件等外部服务调用「日报数据源」接口的共享密钥（Header: X-API-Key） */
+  /** 机器人插件等外部服务调用「日报数据源」接口的共享密钥（Header: X-API-Key，开放接口也复用同一把密钥） */
   pluginApiKey: string;
+  /** 数据自动定时同步开关（每 5 分钟滚动同步）。开发环境设 false 只保留手动刷新，避免与生产环境同时拉取快工单打架；生产默认开启 */
+  autoSync: boolean;
 }
 
 export default (): AppConfig => ({
@@ -43,4 +45,5 @@ export default (): AppConfig => ({
   jwtSecret: process.env.JWT_SECRET ?? 'kgd-process-secret',
   externalEmployeeApi: process.env.EXTERNAL_EMPLOYEE_API ?? 'http://192.168.110.100:3100',
   pluginApiKey: process.env.PLUGIN_API_KEY ?? '',
+  autoSync: process.env.KGD_AUTO_SYNC !== 'false',
 });
