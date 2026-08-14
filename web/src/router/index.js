@@ -5,7 +5,7 @@ import CraftWorkbench from '../views/CraftWorkbench.vue'
 import Profile from '../views/Profile.vue'
 import AdminLayout from '../views/admin/AdminLayout.vue'
 import AdminUsers from '../views/admin/Users.vue'
-import AdminData from '../views/admin/DataScreen.vue'
+import AdminData from '../views/admin/datascreen.vue'
 
 const router = createRouter({
   history: createWebHistory(),
