@@ -1,10 +1,11 @@
-import { Injectable, Logger, OnModuleInit, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { User } from './users.entity';
+import { KgdTaskCache } from '../kgd/kgd-task-cache.entity';
 import { KgdClientService } from '../kgd/kgd-client.service';
 
 export interface JwtPayload {
@@ -16,6 +17,9 @@ export interface JwtPayload {
   roleName: string | null;
 }
 
+/** 快工单岗位名 → 本地系统管理员：岗位为「系统管理员」自动获得管理员权限（按岗位自动分配） */
+const ADMIN_ROLE_NAMES = ['系统管理员'];
+
 @Injectable()
 export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
@@ -23,11 +27,11 @@ export class AuthService implements OnModuleInit {
 
   constructor(
     @InjectRepository(User) private readonly users: Repository<User>,
+    @InjectRepository(KgdTaskCache) private readonly taskCache: Repository<KgdTaskCache>,
     private readonly config: ConfigService,
     private readonly jwt: JwtService,
     private readonly kgdClient: KgdClientService,
   ) {}
-
   /** 启动延迟同步用户：等 KgdAuthService 凭证就绪后再拉取 */
   onModuleInit() {
     setTimeout(async () => {
@@ -40,22 +44,25 @@ export class AuthService implements OnModuleInit {
     }, 5_000);
   }
 
-  /** 启动时从快工单同步用户到本地（已存在则刷新岗位名，不覆盖密码） */
-  async syncUsersFromKgd(): Promise<number> {
-    const adminUsername = this.config.get<string>('kgd.username');
+  /** 启动时从快工单同步用户到本地（已存在则刷新姓名/岗位/部门/系统角色，不覆盖密码）；快工单中已不存在的用户自动删除 */
+  async syncUsersFromKgd(): Promise<{ created: number; removed: number; total: number }> {
     const { data: kgdUsers } = await this.kgdClient.listUsers({ pageNo: 1, pageSize: 500 });
     let created = 0;
     for (const u of kgdUsers ?? []) {
       const roleName = u.role?.name ?? '';
+      const dept = u.department_path_names ?? '';
+      const newRole = this.roleFor(u, roleName);
       const exists = await this.users.findOneBy({ kgdUserId: u.id });
       if (exists) {
-        // 用户名/姓名/岗位可能被修改（如名字打错后修正），同步时以快工单为准刷新（不覆盖密码）
+        // 用户名/姓名/岗位/部门/系统角色可能被修改（如名字打错后修正、岗位/部门变动），同步时以快工单为准刷新（不覆盖密码）
         const patch: Partial<User> = {};
         const newUsername = u.name ?? `u${u.id}`;
         const newName = u.real_name ?? u.name ?? '';
         if (exists.username !== newUsername) patch.username = newUsername;
         if (exists.name !== newName) patch.name = newName;
         if (exists.roleName !== roleName) patch.roleName = roleName;
+        if (exists.departmentPathNames !== dept) patch.departmentPathNames = dept;
+        if (exists.role !== newRole) patch.role = newRole;
         if (Object.keys(patch).length) {
           await this.users.update({ id: exists.id }, patch);
         }
@@ -68,14 +75,34 @@ export class AuthService implements OnModuleInit {
           username: u.name ?? `u${u.id}`,
           name: u.real_name ?? u.name ?? '',
           password: hash,
-          role: u.name === adminUsername ? 'admin' : 'worker',
+          role: newRole,
           roleName,
+          departmentPathNames: dept,
         }),
       );
       created++;
     }
-    this.logger.log(`已从快工单同步用户，新增 ${created} 个本地账号（默认密码 ${this.defaultPassword}）`);
-    return created;
+
+    // 删除快工单中已不存在的本地用户（本地同步残留；kgdUserId 为空的本地账号不删）
+    const kgdIds = new Set((kgdUsers ?? []).map((u: any) => u.id));
+    const locals = await this.users.find({ select: { id: true, kgdUserId: true, name: true } });
+    let removed = 0;
+    for (const l of locals) {
+      if (l.kgdUserId != null && !kgdIds.has(l.kgdUserId)) {
+        await this.users.delete({ id: l.id });
+        removed++;
+        this.logger.log(`快工单中已不存在，删除本地用户「${l.name}」`);
+      }
+    }
+
+    this.logger.log(`已从快工单同步用户：新增 ${created}，删除 ${removed}，共 ${locals.length} 个本地账号（默认密码 ${this.defaultPassword}）`);
+    return { created, removed, total: locals.length };
+  }
+
+  /** 快工单岗位 → 本地系统角色：岗位为「系统管理员」自动分配管理员权限；快工单管理员账号兜底保持 admin */
+  private roleFor(u: { name?: string }, roleName: string): string {
+    if (ADMIN_ROLE_NAMES.includes(roleName)) return 'admin';
+    return u.name === this.config.get<string>('kgd.username') ? 'admin' : 'worker';
   }
 
   /** 本地用户列表（不含密码），供前端按工序选择报工人等 */
@@ -88,9 +115,58 @@ export class AuthService implements OnModuleInit {
         name: true,
         role: true,
         roleName: true,
+        departmentPathNames: true,
       },
       order: { name: 'ASC' },
     });
+  }
+
+  /** 管理员重置用户密码：仅改本地登录密码（bcrypt 哈希），不联动快工单 */
+  async resetPassword(id: number, newPassword: string): Promise<{ name: string }> {
+    if (!newPassword || newPassword.length < 6) {
+      throw new BadRequestException('新密码长度至少 6 位');
+    }
+    const user = await this.users.findOneBy({ id });
+    if (!user) throw new NotFoundException('用户不存在');
+    const hash = await bcrypt.hash(newPassword, 10);
+    await this.users.update({ id }, { password: hash });
+    this.logger.log(`管理员已重置用户「${user.name}」的登录密码`);
+    return { name: user.name };
+  }
+
+  /** 当前登录用户完整信息（个人中心展示：部门/工序等） */
+  async myProfile(jwt: JwtPayload) {
+    const user = await this.users.findOneBy({ id: jwt.sub });
+    if (!user) throw new UnauthorizedException('用户不存在');
+    return {
+      id: user.id,
+      kgdUserId: user.kgdUserId,
+      username: user.username,
+      name: user.name,
+      role: user.role,
+      roleName: user.roleName ?? null,
+      departmentPathNames: user.departmentPathNames ?? null,
+      hasCraft: await this.hasCraft(user.name),
+    };
+  }
+
+  /** 用户修改自己的登录密码：校验原密码后再更新 */
+  async changeMyPassword(jwt: JwtPayload, oldPassword: string, newPassword: string): Promise<{ name: string }> {
+    if (!newPassword || newPassword.length < 6) {
+      throw new BadRequestException('新密码长度至少 6 位');
+    }
+    const user = await this.users
+      .createQueryBuilder('u')
+      .addSelect('u.password')
+      .where('u.id = :id', { id: jwt.sub })
+      .getOne();
+    if (!user || !(await bcrypt.compare(oldPassword, user.password))) {
+      throw new BadRequestException('原密码不正确');
+    }
+    const hash = await bcrypt.hash(newPassword, 10);
+    await this.users.update({ id: user.id }, { password: hash });
+    this.logger.log(`用户「${user.name}」已修改自己的登录密码`);
+    return { name: user.name };
   }
 
   /** 外部人员名单缓存（含当日编码），5 分钟过期；跨日后即使未过期也强制刷新 */
@@ -167,7 +243,19 @@ export class AuthService implements OnModuleInit {
         name: user.name,
         role: user.role,
         roleName: user.roleName ?? null,
+        /** 该用户是否被分配了工序（作为某道工序的报工人），供登录后默认跳转判断 */
+        hasCraft: await this.hasCraft(user.name),
       },
     };
+  }
+
+  /** 该用户是否被分配了工序：任务缓存中作为某道工序的报工人出现即视为有工序 */
+  private async hasCraft(name: string): Promise<boolean> {
+    if (!name) return false;
+    const count = await this.taskCache
+      .createQueryBuilder('t')
+      .where('t.reportableUserNames LIKE :name', { name: `%${name}%` })
+      .getCount();
+    return count > 0;
   }
 }

@@ -34,7 +34,16 @@
                   <el-icon :size="14"><component :is="isAdmin ? 'Lock' : 'User'" /></el-icon>
                   <span>{{ permissionText }}</span>
                 </div>
-                <el-dropdown-item divided command="logout" class="up-logout">退出登录</el-dropdown-item>
+                <!-- 管理员专属：管理员界面入口（仅 admin 可见） -->
+                <el-dropdown-item v-if="isAdmin" command="admin">
+                  <el-icon :size="14"><Setting /></el-icon>管理员界面
+                </el-dropdown-item>
+                <el-dropdown-item command="profile">
+                  <el-icon :size="14"><User /></el-icon>个人中心
+                </el-dropdown-item>
+                <el-dropdown-item divided command="logout" class="up-logout">
+                  <el-icon :size="14"><SwitchButton /></el-icon>退出登录
+                </el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -229,7 +238,7 @@ const greeting = computed(() => {
   const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
   const h = d.getHours()
   const part = h < 6 ? '凌晨好' : h < 12 ? '上午好' : h < 14 ? '中午好' : h < 18 ? '下午好' : '晚上好'
-  return `${part}，${auth.user?.name || '师傅'} · ${d.getMonth() + 1}月${d.getDate()}日 ${week}`
+  return `${part}，${auth.user?.name || '师傅'} · ${d.getMonth() + 1}/${d.getDate()} ${week}`
 })
 
 /** 当前页任务按 HT图号 分组（稳定归组，保持首次出现的顺序），并汇总该图号下的计划数 */
@@ -429,6 +438,10 @@ function onCommand(cmd) {
   if (cmd === 'logout') {
     auth.logout()
     router.push('/login')
+  } else if (cmd === 'admin') {
+    router.push('/admin')
+  } else if (cmd === 'profile') {
+    router.push('/profile')
   }
 }
 
@@ -440,6 +453,11 @@ function shortDate(v) {
 }
 
 onMounted(() => {
+  // 系统管理员且未被分配任何工序：默认进入管理员界面（而非空工作台）
+  if (auth.user?.role === 'admin' && auth.user?.hasCraft === false) {
+    router.replace('/admin')
+    return
+  }
   refresh()
   // 刷新当前用户信息（岗位/权限可能已变化，登录后首次进入也能拿到最新）
   api
@@ -464,24 +482,25 @@ onMounted(() => {
 .header-inner {
   max-width: 1024px;
   margin: 0 auto;
-  padding: 16px 20px 12px;
+  padding: 12px 16px 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
+  flex: 1;
 }
 
 .header-logo {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
   object-fit: cover;
   box-shadow: var(--shadow-sm);
   flex-shrink: 0;
@@ -493,37 +512,46 @@ onMounted(() => {
 
 .title {
   margin: 0;
-  font-size: 28px;
+  font-size: 21px;
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--foreground);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .subtitle {
-  margin: 6px 0 0;
-  font-size: 13px;
+  margin: 3px 0 0;
+  font-size: 11px;
   color: var(--muted-foreground);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .header-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .round-btn {
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   border-radius: 999px !important;
 }
 
 .avatar {
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   border-radius: 999px;
   background: rgba(0, 122, 255, 0.12);
   color: var(--primary);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   display: flex;
   align-items: center;

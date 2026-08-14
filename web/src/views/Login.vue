@@ -129,7 +129,12 @@ async function submit(auto = false) {
       localStorage.removeItem(SAVED_KEY)
     }
     if (!auto) ElMessage.success('登录成功')
-    router.push('/')
+    // 系统管理员且未被分配任何工序：默认打开管理员界面（而非空工作台）
+    if (auth.user?.role === 'admin' && auth.user?.hasCraft === false) {
+      router.replace('/admin')
+    } else {
+      router.push('/')
+    }
   } catch (e) {
     // 手动与自动（记住密码）登录失败都要提示；拦截器在 /login 页对 401 静默，不会重复弹
     ElMessage.error(e.response?.data?.message || '登录失败')

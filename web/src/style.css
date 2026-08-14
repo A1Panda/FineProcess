@@ -291,13 +291,13 @@ body,
 
 /* ===== 头像下拉（用户信息与权限）苹果毛玻璃风格 ===== */
 .user-popper.el-popper {
-  border-radius: 18px;
+  border-radius: 16px;
   border: 1px solid var(--glass-border);
   background: var(--glass-strong);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
-  box-shadow: 0 24px 56px -16px rgba(0, 0, 0, 0.24), 0 6px 16px -6px rgba(0, 0, 0, 0.08);
-  padding: 6px;
+  box-shadow: 0 20px 48px -16px rgba(0, 0, 0, 0.22), 0 6px 16px -6px rgba(0, 0, 0, 0.08);
+  padding: 4px;
 }
 
 .user-popper .el-dropdown-menu {
@@ -305,21 +305,24 @@ body,
   padding: 0;
 }
 
-/* 用户信息头 */
+/* 用户信息头：紧凑单行 */
 .user-popper .up-head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px 12px;
+  gap: 10px;
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
 }
 
+/* 头像：纯色小圆，去掉渐变与发光 */
 .user-popper .up-avatar {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border-radius: 999px;
-  background: rgba(0, 122, 255, 0.12);
-  color: var(--primary);
-  font-size: 17px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 16px;
   font-weight: 600;
   display: flex;
   align-items: center;
@@ -331,11 +334,11 @@ body,
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 .user-popper .up-name {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--foreground);
   letter-spacing: -0.01em;
@@ -344,43 +347,54 @@ body,
   white-space: nowrap;
 }
 
+/* 岗位：轻量小字，去掉药丸底托 */
 .user-popper .up-role {
   font-size: 11px;
-  font-weight: 500;
-  color: var(--primary);
-  background: rgba(0, 122, 255, 0.1);
-  border-radius: 999px;
-  padding: 2px 10px;
-  align-self: flex-start;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 权限说明行 */
+/* 权限说明行：轻量文字，两行换行时也保持舒适行距 */
 .user-popper .up-perm {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 12px 6px;
-  padding: 10px 12px;
-  background: var(--muted);
-  border-radius: 12px;
-  font-size: 12px;
-  line-height: 1.5;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0 10px 4px;
+  padding: 9px 2px;
+  font-size: 12.5px;
+  line-height: 1.55;
   color: var(--muted-foreground);
 }
 
 .user-popper .up-perm .el-icon {
-  color: var(--primary);
+  color: var(--muted-foreground);
   flex-shrink: 0;
+  margin-top: 2px;
 }
 
-/* 下拉项：圆角 + 分隔线融入 */
+/* 下拉项：紧凑 iOS 列表单元格 */
 .user-popper .el-dropdown-menu__item {
-  border-radius: 12px;
-  margin: 2px 0;
-  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+  margin: 1px 0;
+  padding: 8px 10px;
   font-size: 13px;
   color: var(--foreground);
+}
+
+.user-popper .el-dropdown-menu__item .el-icon {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  transition: color 0.15s ease;
+}
+
+.user-popper .el-dropdown-menu__item:hover .el-icon,
+.user-popper .el-dropdown-menu__item:focus .el-icon {
+  color: var(--primary);
 }
 
 .user-popper .el-dropdown-menu__item:hover,
@@ -390,7 +404,7 @@ body,
 }
 
 .user-popper .el-dropdown-menu__item--divided {
-  margin-top: 6px;
+  margin: 4px 0;
   border-top: 1px solid var(--border);
 }
 
@@ -399,9 +413,18 @@ body,
   font-weight: 500;
 }
 
+.user-popper .el-dropdown-menu__item.up-logout .el-icon {
+  color: var(--destructive);
+}
+
 .user-popper .el-dropdown-menu__item.up-logout:hover,
 .user-popper .el-dropdown-menu__item.up-logout:focus {
   background: rgba(255, 59, 48, 0.08);
+  color: var(--destructive);
+}
+
+.user-popper .el-dropdown-menu__item.up-logout:hover .el-icon,
+.user-popper .el-dropdown-menu__item.up-logout:focus .el-icon {
   color: var(--destructive);
 }
 

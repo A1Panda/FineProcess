@@ -30,6 +30,10 @@ export class User {
   @Column({ name: 'role_name', type: 'varchar', length: 64, nullable: true, default: '' })
   roleName: string | null;
 
+  /** 快工单部门路径（如 包装部/打磨/A组），同步时以快工单为准刷新 */
+  @Column({ name: 'department_path_names', type: 'varchar', length: 255, nullable: true, default: '' })
+  departmentPathNames: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

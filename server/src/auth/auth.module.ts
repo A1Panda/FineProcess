@@ -5,13 +5,14 @@ import { ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { User } from './users.entity';
+import { KgdTaskCache } from '../kgd/kgd-task-cache.entity';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 /** 全局模块：导出 JwtService 供各模块的 JwtAuthGuard 使用 */
 @Global()
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([User, KgdTaskCache]),
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
