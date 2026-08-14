@@ -131,7 +131,8 @@ async function submit(auto = false) {
     if (!auto) ElMessage.success('登录成功')
     router.push('/')
   } catch (e) {
-    if (!auto) ElMessage.error(e.response?.data?.message || '登录失败')
+    // 手动与自动（记住密码）登录失败都要提示；拦截器在 /login 页对 401 静默，不会重复弹
+    ElMessage.error(e.response?.data?.message || '登录失败')
   } finally {
     loading.value = false
   }

@@ -9,9 +9,10 @@
     <div class="bill-code" @click.stop="copyCode">
       <el-icon :size="15"><CopyDocument /></el-icon>
       <span class="code">{{ task.produceBillCode }}</span>
+      <span v-if="task.spec" class="bill-spec" :title="task.goodsName">｜{{ task.spec }}</span>
     </div>
 
-    <div class="goods" :title="task.goodsName">{{ task.goodsName }}</div>
+    <div class="goods" :title="goodsTitle">{{ task.goodsName }}</div>
 
     <div class="nums">
       <span class="num-item">计划 <b class="strong">{{ task.num }}</b><span class="unit">{{ task.unitName }}</span></span>
@@ -84,6 +85,10 @@ const recordsVisible = ref(false)
 
 /** 已终结任务（已完成/已取消等）：无操作按钮，数量区显示当前状态 */
 const isTerminal = computed(() => !['未开始', '进行中', '已暂停'].includes(props.task?.statusName))
+const goodsTitle = computed(() => {
+  const spec = props.task?.spec
+  return spec ? `${props.task?.goodsName ?? ''}｜${spec}` : (props.task?.goodsName ?? '')
+})
 
 /** 剩余待加工数量 = 计划 - 良品（不良品不再重复计入剩余） */
 const remaining = computed(() =>
@@ -347,6 +352,15 @@ function copyCode() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.bill-spec {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary, #8a94a6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .goods {
