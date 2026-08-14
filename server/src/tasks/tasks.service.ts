@@ -431,6 +431,8 @@ export class TasksService {
         produceBillCode: b.code,
         htNo: b.htNo,
         goodsName: b.goodsName,
+        /** 商品规格（如 97.2*50.04*9.5），编程页卡片加工单号后展示 */
+        spec: b.goodsSpec ?? '',
         num: b.num,
         unitName: b.unitName,
         statusName: b.statusName,

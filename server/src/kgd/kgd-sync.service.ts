@@ -23,6 +23,9 @@ const TASK_FULL_RECONCILE_SEC = 24 * 60 * 60; // 任务全量对账间隔：每�
 const BILL_ACTIVE_STATUSES = [1, 2, 5]; // 加工单活动状态：1=未开始 2=进行中 5=已暂停（5 纳入增量，缓存才能及时反映暂停；前端仍按 1,2 过滤显示）
 /** 任务活动状态：未开始(1)+进行中(2)+已暂停(4) */
 const TASK_ACTIVE_STATUSES = [1, 2, 4];
+/** 全量同步时间窗口：只拉近一年内的数据，超过一年的历史不获取。
+ *  报工按 report_time、任务按 updated_at 服务端过滤；本地超过一年的记录保留不误删（见全量清理保护） */
+const FULL_SYNC_WINDOW_DAYS = 365;
 
 /** 格式化为 'YYYY-MM-DD HH:mm:ss'（快工单 report_time 过滤精确到秒） */
 function fmtDateTime(d: Date): string {
@@ -160,6 +163,7 @@ export class KgdSyncService implements OnModuleInit {
    * - 增量：只拉 BILL_ACTIVE_STATUSES 状态，请求量从 40+ 页降到 3 页，毫秒级完成
    *   （含 5=已暂停：快工单暂停的单若不入增量，本地缓存将停留在旧"进行中"状态，前端刷新仍显示）
    * - 全量对账：首次 / 距上次对账超过 BILL_FULL_RECONCILE_SEC / 手动刷新强制时执行，拉全量并清理远程已删除记录、刷新已完成/已取消历史
+   *   （加工单量小约千余条，且需保证暂停/完成状态准确，保持全量拉取；时间窗口仅用于报工与任务）
    */
   private async syncBills(forceFull = false) {
     const start = Date.now();
@@ -239,7 +243,8 @@ export class KgdSyncService implements OnModuleInit {
    * - 近 N 天已完成：快工单内报满量会【自动】把任务置为已完成（status=3），
    *   活动状态增量拉不到，若不补拉本地会一直停留旧状态；
    *   用 updated_at 窗口精准补拉 [当前-N天, 当前] 的已完成任务（实测仅 1 页 37 条）
-   * - 全量对账：首次 / 距上次对账超过 TASK_FULL_RECONCILE_SEC / 手动刷新强制时执行，拉全量并清理远程已删除记录、刷新已完成历史
+   * - 全量对账：首次 / 距上次对账超过 TASK_FULL_RECONCILE_SEC / 手动刷新强制时执行，按 updated_at 拉近一年
+   *   （超过一年的历史不获取），刷新活动/已完成状态；清理仅限"活动或近一年完成"的失效任务，超一年本地历史保留
    */
   private async syncTasks(forceFull = false, reportWindowDays = 0) {
     const start = Date.now();
@@ -248,7 +253,8 @@ export class KgdSyncService implements OnModuleInit {
     const fullDue = forceFull || !lastFull || lastFull < minusSeconds(now, TASK_FULL_RECONCILE_SEC);
 
     if (fullDue) {
-      const { all, total } = await this.fetchTasks();
+      // 全量只拉近一年（updated_at 窗口）：超过一年的历史不再获取
+      const { all, total } = await this.fetchTasks(undefined, minusDays(now, FULL_SYNC_WINDOW_DAYS));
       await this.upsertTasks(all);
       // 全量：用公版 order_number 校准真实工艺顺序（OpenAPI 返回按 id 升序，非真实顺序；
       // 快工单真实顺序由可拖动的 order_number 决定，需登录公版 Web 接口获取）
@@ -259,18 +265,23 @@ export class KgdSyncService implements OnModuleInit {
       } catch (e) {
         this.logger.warn(`工艺顺序校准失败：${(e as Error).message}`);
       }
-      // 全量未截断时才清理本地已删除记录，避免误删
+      // 全量未截断时才清理本地已删除记录，避免误删；
+      // 窗口只拉近一年，清理仅限"活动或近一年内完成"的任务，超过一年的本地历史保留不误删
       if (total < 10_000 && all.length) {
         const ids = all.map((t: any) => t.id).filter((id: any) => id != null);
+        const cutoff = minusDays(now, FULL_SYNC_WINDOW_DAYS);
         const del = await this.tasks
           .createQueryBuilder()
           .delete()
           .where('taskId NOT IN (:...ids)', { ids })
+          .andWhere(`(end_time IS NULL OR end_time = '' OR end_time >= :cutoff)`, { cutoff })
           .execute();
-        if (del.affected) this.logger.log(`任务缓存清理完成：删除本地已失效 ${del.affected} 条`);
+        if (del.affected) this.logger.log(`任务缓存清理完成：删除本地已失效 ${del.affected} 条（仅限活动/近一年完成）`);
       }
       await this.syncMeta.upsert({ key: 'task_full_sync_at', value: now }, ['key']);
-      this.logger.log(`任务同步完成(全量对账)：${all.length} 条，耗时 ${Date.now() - start}ms`);
+      this.logger.log(
+        `任务同步完成(全量对账)：近一年 ${all.length} 条，耗时 ${Date.now() - start}ms`,
+      );
       return;
     }
 
@@ -392,8 +403,8 @@ export class KgdSyncService implements OnModuleInit {
    * 报工记录同步：增量为主 + 定期全量对账
    * - 增量：以 kgd_sync_meta.report_last_sync 为游标，仅拉 [游标-60s, 当前时间] 窗口，省 OpenAPI 配额（定时轮询）
    * - 近 N 天：手动刷新短按时覆盖 [当前-N天, 当前] 窗口，完善近期被修改 / 漏同步的报工记录
-   * - 全量对账：首次 / 距上次对账超过 REPORT_FULL_RECONCILE_SEC / 手动刷新长按强制时执行，全量拉取并清理本地已存在但远程已删除的记录
-   *   （⚠️ 唯一清理纯同步记录的地方：报工列表接口不含时间戳，窗口路径无法安全判断记录归属，见 incrementalSyncReportRecords）
+   * - 全量对账：首次 / 距上次对账超过 REPORT_FULL_RECONCILE_SEC / 手动刷新长按强制时执行，按 report_time 拉近一年
+   *   （超过一年的历史不获取）；窗口受限时跳过删除清理，超一年本地记录保留（见 fullSyncReportRecords）
    * - 本地已有（reportId 匹配）→ 更新业务字段；不写入 reportTime，避免覆盖本地报工时间
    * - 本地 reportId 为空的行按 加工单+工序+用户+数量 匹配补全 ID 再更新
    */
@@ -419,23 +430,20 @@ export class KgdSyncService implements OnModuleInit {
     this.logger.log(`报工记录同步完成(增量)：窗口 [${minusSeconds(lastSync!, REPORT_OVERLAP_SEC)}, ${now}]，耗时 ${Date.now() - start}ms`);
   }
 
-  /** 全量拉取 + upsert + 清理远程已删除记录 + 推进游标 */
+  /**
+   * 全量拉取（仅近一年 report_time 窗口）+ upsert + 推进游标。
+   * ⚠️ 窗口受限时【跳过删除清理】：本地 report_time 无值（纯同步记录）无法区分记录年龄，
+   * 若继续按 "report_id NOT IN 远程集合" 清理，会把超过一年、未被本次窗口拉到的历史记录全部误删。
+   * 超一年的本地历史保留；远程已删除记录的清理在窗口模式下放弃（宁保留不误删）。
+   */
   private async fullSyncReportRecords(now: string) {
-    const { all, total } = await this.fetchReportRecords({});
+    const from = minusDays(now, FULL_SYNC_WINDOW_DAYS);
+    const { all, total } = await this.fetchReportRecords({ report_time_start: from });
     await this.backfillNullReportIds(all);
     await this.upsertReportRows(all);
-    // 清理：本地 reportId 非空但远程已删除的记录（仅在全量未截断时执行，避免误删）
-    if (total < 10_000) {
-      const ids = all.map((r: any) => r.id).filter((id: any) => id != null);
-      if (ids.length) {
-        const del = await this.reportCache
-          .createQueryBuilder()
-          .delete()
-          .where('report_id IS NOT NULL AND report_id NOT IN (:...ids)', { ids })
-          .execute();
-        if (del.affected) this.logger.log(`报工缓存清理完成：删除本地已失效 ${del.affected} 条`);
-      }
-    }
+    this.logger.log(
+      `报工全量对账：窗口 [${from}, ${now}] 拉取 ${all.length} 条（total=${total}）；窗口模式跳过本地删除清理（保留超一年历史）`,
+    );
     // 同步成功后才推进游标（失败保持原游标，下次继续对账）
     await this.syncMeta.upsert({ key: 'report_last_sync', value: now }, ['key']);
     await this.syncMeta.upsert({ key: 'report_full_sync_at', value: now }, ['key']);
