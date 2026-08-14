@@ -5,6 +5,7 @@ import { KgdClientService } from '../kgd/kgd-client.service';
 import { KgdSyncService } from '../kgd/kgd-sync.service';
 import { KgdBillCache } from '../kgd/kgd-bill-cache.entity';
 import { KgdTaskCache } from '../kgd/kgd-task-cache.entity';
+import { KgdGoodsCache } from '../kgd/kgd-goods-cache.entity';
 
 const PAGE_SIZE = 100;
 const CONCURRENCY = 6; // 分页并发数（与同步服务实测一致）
@@ -38,6 +39,7 @@ export class ReportDataService {
     private readonly sync: KgdSyncService,
     @InjectRepository(KgdBillCache) private readonly bills: Repository<KgdBillCache>,
     @InjectRepository(KgdTaskCache) private readonly tasks: Repository<KgdTaskCache>,
+    @InjectRepository(KgdGoodsCache) private readonly goods: Repository<KgdGoodsCache>,
   ) {}
 
   /** 分页并发拉取指定接口全量数据 */
@@ -165,12 +167,15 @@ export class ReportDataService {
 
   // ===== 加工单交期 =====
 
+  /** 查询触发的同步统一走节流（30 秒内只真正同步一次，见 KgdSyncService.syncNow） */
+  private static readonly SYNC_THROTTLE_MS = 30_000;
+
   /** 加工单交期映射 {code: YYYY-MM-DD}：读本地缓存，查询前先触发一次即时同步 */
   async getDeliveryDates(codes: string[]) {
     const list = codes.filter(Boolean);
     if (!list.length) return {};
     try {
-      await this.sync.requestSync();
+      await this.sync.requestSync(false, 0, ReportDataService.SYNC_THROTTLE_MS);
     } catch (e) {
       // 同步失败不阻断查询，继续用缓存数据
       this.logger.warn(`查询交期前同步失败，使用现有缓存: ${(e as Error).message}`);
@@ -198,7 +203,7 @@ export class ReportDataService {
    */
   async getBillStatus() {
     try {
-      await this.sync.requestSync();
+      await this.sync.requestSync(false, 0, ReportDataService.SYNC_THROTTLE_MS);
     } catch (e) {
       // 同步失败不阻断查询，继续用缓存数据
       this.logger.warn(`查询加工单状态前同步失败，使用现有缓存: ${(e as Error).message}`);
@@ -295,7 +300,7 @@ export class ReportDataService {
     const codeList = codes.map((c) => c.trim()).filter(Boolean);
     if (!codeList.length) return [];
     try {
-      await this.sync.requestSync();
+      await this.sync.requestSync(false, 0, ReportDataService.SYNC_THROTTLE_MS);
     } catch (e) {
       this.logger.warn(`查询工序顺序前同步失败，使用现有缓存: ${(e as Error).message}`);
     }
@@ -362,15 +367,17 @@ export class ReportDataService {
 
   // ===== 商品（新增/编辑） =====
 
-  /** 商品新增（透传 /open_api/goods/add，必填 name） */
+  /** 商品新增（透传 /open_api/goods/add，必填 name），成功后后台刷新商品缓存 */
   async addGoods(payload: Record<string, unknown>) {
     const { data } = await this.kgdClient.addGoods(payload);
+    this.sync.requestSync().catch((e) => this.logger.warn(`新增商品后同步失败: ${(e as Error).message}`));
     return data;
   }
 
-  /** 商品编辑（透传 /open_api/goods/edit，必填 id+name） */
+  /** 商品编辑（透传 /open_api/goods/edit，必填 id+name），成功后后台刷新商品缓存 */
   async editGoods(payload: Record<string, unknown>) {
     const { data } = await this.kgdClient.editGoods(payload);
+    this.sync.requestSync().catch((e) => this.logger.warn(`编辑商品后同步失败: ${(e as Error).message}`));
     return data;
   }
 
@@ -405,9 +412,9 @@ export class ReportDataService {
   // ===== 商品列表 =====
 
   /**
-   * 商品列表（实时拉取快工单 /open_api/goods/list）。
-   * 支持按名称/编号/规格（keyword）、更新时间窗口（updatedAtStart/End）、
-   * 供应商、创建人、分类、来源、启用状态筛选。
+   * 商品列表（读本地缓存 kgd_goods_cache，由 KgdSyncService 定时 + 查询后台刷新）。
+   * 支持按名称/编号/规格/扩展字段（keyword）、更新时间窗口（updatedAtStart/End）、
+   * 供应商、创建人、分类、来源、启用状态筛选（本地过滤）。
    */
   async getGoods(
     keyword?: string,
@@ -419,35 +426,97 @@ export class ReportDataService {
     source?: string,
     isEnable?: string,
   ) {
-    const params: Record<string, unknown> = {};
-    const set = (key: string, v?: string, numeric = false) => {
-      const s = (v ?? '').trim();
-      if (!s) return;
-      params[key] = numeric ? Number(s) : s;
+    let cached = await this.goods.find();
+    if (!cached.length) {
+      // 缓存未就绪（如刚启动）：实时拉一次兜底并写入缓存
+      try {
+        const records = await this.fetchAll('goods', {});
+        if (records.length) {
+          const rows = records.map((g: any) => ({
+            goodsId: g.id,
+            code: g.code ?? '',
+            name: g.name ?? '',
+            standard: g.standard ?? '',
+            categoryPathNames: g.category_path_names ?? '',
+            source: Number(g.source ?? 0),
+            sourceName: g.source_name ?? '',
+            unitName: g.unit?.name ?? '',
+            sellingMoney: g.selling_money ?? null,
+            isEnable: g.is_enable != null ? Number(g.is_enable) : 1,
+            updatedAt: g.updated_at ?? null,
+            fieldValueList: g.fieldValueList ?? [],
+            raw: g,
+          }));
+          await this.goods.upsert(rows, ['goodsId']);
+          cached = this.goods.create(rows) as unknown as KgdGoodsCache[];
+        }
+      } catch (e) {
+        this.logger.warn(`商品缓存未就绪时实时拉取失败: ${(e as Error).message}`);
+      }
+    } else {
+      // 后台同步刷新缓存（30 秒节流），不阻塞查询（商品搜索频率高，await 全量同步会明显变慢）
+      this.sync
+        .requestSync(false, 0, ReportDataService.SYNC_THROTTLE_MS)
+        .catch((e) => this.logger.warn(`商品查询后台同步失败: ${(e as Error).message}`));
+    }
+
+    const kw = (keyword ?? '').trim().toLowerCase();
+    const src = (source ?? '').trim();
+    const enb = (isEnable ?? '').trim();
+    const uStart = (updatedAtStart ?? '').trim();
+    const uEnd = (updatedAtEnd ?? '').trim();
+    const sup = (supplierName ?? '').trim().toLowerCase();
+    const creator = (createUserName ?? '').trim().toLowerCase();
+    const cat = (categoryName ?? '').trim().toLowerCase();
+
+    const inWindow = (v: string | null | undefined) => {
+      if (!uStart && !uEnd) return true;
+      const s = (v ?? '').slice(0, 19);
+      if (uStart && s < uStart) return false;
+      if (uEnd && s > uEnd) return false;
+      return true;
     };
-    set('goods_keyword', keyword);
-    set('updated_at_start', updatedAtStart);
-    set('updated_at_end', updatedAtEnd);
-    set('supplier_name', supplierName);
-    set('create_user_name', createUserName);
-    set('category_name', categoryName);
-    set('source', source, true);
-    set('is_enable', isEnable, true);
-    const records = await this.fetchAll('goods', params);
-    return records.map((g: any) => ({
-      id: g.id,
+
+    const list = cached.filter((g) => {
+      if (kw) {
+        const fields = [
+          g.name ?? '',
+          g.code ?? '',
+          g.standard ?? '',
+          ...(((g.fieldValueList as unknown) ?? []) as any[]).map((f: any) => String(f.value ?? '')),
+        ]
+          .join(' ')
+          .toLowerCase();
+        if (!fields.includes(kw)) return false;
+      }
+      if (src && String(g.source) !== src) return false;
+      if (enb && String(g.isEnable) !== enb) return false;
+      if (!inWindow(g.updatedAt)) return false;
+      const raw = (g.raw ?? {}) as any;
+      const supplier = raw.supplier as { name?: string } | null | undefined;
+      const creatorObj = raw.createUser as { real_name?: string } | null | undefined;
+      if (sup && !String(supplier?.name ?? '').toLowerCase().includes(sup)) return false;
+      if (creator && !String(creatorObj?.real_name ?? '').toLowerCase().includes(creator)) return false;
+      if (cat && !String(g.categoryPathNames ?? '').toLowerCase().includes(cat)) return false;
+      return true;
+    });
+
+    return list.map((g) => ({
+      id: g.goodsId,
       code: g.code ?? '',
       name: g.name ?? '',
       standard: g.standard ?? '',
-      categoryPathNames: g.category_path_names ?? '',
+      categoryPathNames: g.categoryPathNames ?? '',
       source: Number(g.source ?? 0),
-      sourceName: g.source_name ?? '',
-      unitName: g.unit?.name ?? '',
-      updatedAt: g.updated_at ?? null,
+      sourceName: g.sourceName ?? '',
+      unitName: g.unitName ?? '',
+      updatedAt: g.updatedAt ?? null,
       /** 扩展字段（自定义属性），[{ name, value }]，如 HT图号等 */
       fieldValueList: g.fieldValueList ?? [],
       /** 扩展字段 key-value 映射，方便直接取值（如 fieldValues['HT图号']） */
-      fieldValues: Object.fromEntries((g.fieldValueList ?? []).map((f: any) => [f.name, f.value ?? ''])),
+      fieldValues: Object.fromEntries(
+        (((g.fieldValueList as unknown) ?? []) as any[]).map((f: any) => [f.name, f.value ?? '']),
+      ),
     }));
   }
 

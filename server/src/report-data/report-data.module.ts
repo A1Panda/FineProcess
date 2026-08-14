@@ -5,6 +5,7 @@ import { ReportDataService } from './report-data.service';
 import { ApiKeyGuard } from './api-key.guard';
 import { KgdBillCache } from '../kgd/kgd-bill-cache.entity';
 import { KgdTaskCache } from '../kgd/kgd-task-cache.entity';
+import { KgdGoodsCache } from '../kgd/kgd-goods-cache.entity';
 
 /**
  * 日报数据源模块：把快工单 OpenAPI 数据以只读接口形式暴露给外部系统
@@ -12,7 +13,7 @@ import { KgdTaskCache } from '../kgd/kgd-task-cache.entity';
  * KgdClientService / KgdSyncService 由全局 KgdModule 提供。
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([KgdBillCache, KgdTaskCache])],
+  imports: [TypeOrmModule.forFeature([KgdBillCache, KgdTaskCache, KgdGoodsCache])],
   controllers: [ReportDataController],
   providers: [ReportDataService, ApiKeyGuard],
 })

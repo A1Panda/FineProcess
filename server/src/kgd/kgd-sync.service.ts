@@ -7,6 +7,7 @@ import * as bcrypt from 'bcryptjs';
 import { KgdClientService } from './kgd-client.service';
 import { KgdBillCache } from './kgd-bill-cache.entity';
 import { KgdTaskCache } from './kgd-task-cache.entity';
+import { KgdGoodsCache } from './kgd-goods-cache.entity';
 import { KgdReportCache } from '../report/kgd-report-cache.entity';
 import { User } from '../auth/users.entity';
 import { KgdSyncMeta } from './kgd-sync-meta.entity';
@@ -19,6 +20,7 @@ const REPORT_FULL_RECONCILE_SEC = 24 * 60 * 60; // 报工全量对账间隔：�
 const REPORT_RECENT_DAYS = 3; // 手动刷新（短按增量）时报工覆盖最近天数：完善近期被修改/漏同步的报工记录
 const BILL_FULL_RECONCILE_SEC = 24 * 60 * 60; // 加工单全量对账间隔：每天一次（长按刷新可强制触发）
 const TASK_FULL_RECONCILE_SEC = 24 * 60 * 60; // 任务全量对账间隔：每天一次（长按刷新可强制触发）
+const GOODS_FULL_RECONCILE_SEC = 24 * 60 * 60; // 商品全量对账间隔：每天一次
 /** 滚动同步只拉活动状态（已完成/已取消的历史数据由全量对账刷新）：加工单 未开始(1)+生产中(2) */
 const BILL_ACTIVE_STATUSES = [1, 2, 5]; // 加工单活动状态：1=未开始 2=进行中 5=已暂停（5 纳入增量，缓存才能及时反映暂停；前端仍按 1,2 过滤显示）
 /** 任务活动状态：未开始(1)+进行中(2)+已暂停(4) */
@@ -78,6 +80,7 @@ export class KgdSyncService implements OnModuleInit {
     private readonly config: ConfigService,
     @InjectRepository(KgdBillCache) private readonly bills: Repository<KgdBillCache>,
     @InjectRepository(KgdTaskCache) private readonly tasks: Repository<KgdTaskCache>,
+    @InjectRepository(KgdGoodsCache) private readonly goods: Repository<KgdGoodsCache>,
     @InjectRepository(KgdReportCache) private readonly reportCache: Repository<KgdReportCache>,
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(KgdSyncMeta) private readonly syncMeta: Repository<KgdSyncMeta>,
@@ -100,12 +103,20 @@ export class KgdSyncService implements OnModuleInit {
     await this.syncNow();
   }
 
-  /** 触发一次即时同步（手动刷新 / 写操作后 / 定时器调用，可等待完成） */
-  syncNow(forceFull = false, reportWindowDays = 0): Promise<void> {
+  /** 查询触发的即时同步节流窗口：30 秒内只真正执行一次，间隔内的查询直接读缓存返回 */
+  private static readonly QUERY_SYNC_THROTTLE_MS = 30_000;
+  private lastSyncStartedAt = 0;
+
+  /** 触发一次即时同步（手动刷新 / 写操作后 / 定时器调用，可等待完成）。
+   *  throttleMs>0 表示查询触发的节流同步：距上次真正执行不足 throttleMs 时直接跳过（读缓存返回） */
+  syncNow(forceFull = false, reportWindowDays = 0, throttleMs = 0): Promise<void> {
+    const now = Date.now();
+    if (throttleMs > 0 && now - this.lastSyncStartedAt < throttleMs) return Promise.resolve();
     if (this.currentSync) return this.currentSync;
     this.currentSync = this.doSync(forceFull, reportWindowDays).finally(() => {
       this.currentSync = null;
     });
+    this.lastSyncStartedAt = now;
     return this.currentSync;
   }
 
@@ -116,6 +127,7 @@ export class KgdSyncService implements OnModuleInit {
         this.syncBills(forceFull),
         this.syncTasks(forceFull, reportWindowDays),
         this.syncReportRecords(forceFull, reportWindowDays),
+        this.syncGoods(forceFull),
         this.syncUsers(),
       ]);
       this.logger.log(`数据同步完成，耗时 ${Date.now() - start}ms`);
@@ -393,10 +405,98 @@ export class KgdSyncService implements OnModuleInit {
     await this.tasks.upsert(rows, ['taskId']);
   }
 
+  /**
+   * 商品滚动同步：增量为主 + 定期全量对账
+   * - 增量：以 kgd_sync_meta.goods_last_sync 为游标，仅拉 [游标-60s, 当前] 的 updated_at 窗口
+   * - 全量对账：首次 / 距上次对账超过 GOODS_FULL_RECONCILE_SEC / forceFull 时执行，
+   *   按 updated_at 拉近一年全量，清理本地已删除记录
+   * - 商品量约千余条，开放接口 /goods 改读缓存；写操作（新增/编辑）后由 requestSync 快速刷新
+   */
+  private async syncGoods(forceFull = false) {
+    const start = Date.now();
+    const now = fmtDateTime(new Date());
+    const lastSync = (await this.syncMeta.findOneBy({ key: 'goods_last_sync' }))?.value || null;
+    const lastFull = (await this.syncMeta.findOneBy({ key: 'goods_full_sync_at' }))?.value || null;
+    const fullDue = forceFull || !lastSync || !lastFull || lastFull < minusSeconds(now, GOODS_FULL_RECONCILE_SEC);
+
+    if (fullDue) {
+      const { all, total } = await this.fetchGoods(minusDays(now, FULL_SYNC_WINDOW_DAYS));
+      await this.upsertGoods(all);
+      // 全量未截断时才清理本地已删除记录，避免误删；
+      // 窗口只拉近一年（updated_at），清理仅限"近一年内更新过"的商品，超过一年未更新的本地记录保留不误删
+      if (total < 10_000 && all.length) {
+        const ids = all.map((g: any) => g.id).filter((id: any) => id != null);
+        const cutoff = minusDays(now, FULL_SYNC_WINDOW_DAYS);
+        const del = await this.goods
+          .createQueryBuilder()
+          .delete()
+          .where('goodsId NOT IN (:...ids)', { ids })
+          .andWhere('updatedAt >= :cutoff', { cutoff })
+          .execute();
+        if (del.affected) this.logger.log(`商品缓存清理完成：删除本地已失效 ${del.affected} 条（仅限近一年更新）`);
+      }
+      await this.syncMeta.upsert({ key: 'goods_full_sync_at', value: now }, ['key']);
+      await this.syncMeta.upsert({ key: 'goods_last_sync', value: now }, ['key']);
+      this.logger.log(`商品同步完成(全量对账)：${all.length} 条，耗时 ${Date.now() - start}ms`);
+      return;
+    }
+
+    const { all } = await this.fetchGoods(minusSeconds(lastSync!, REPORT_OVERLAP_SEC));
+    await this.upsertGoods(all);
+    await this.syncMeta.upsert({ key: 'goods_last_sync', value: now }, ['key']);
+    this.logger.log(`商品同步完成(增量)：${all.length} 条，耗时 ${Date.now() - start}ms`);
+  }
+
+  /** 分页拉取商品（updatedAtStart 非空时按 updated_at 时间窗口拉取），并发拉取剩余页 */
+  private async fetchGoods(updatedAtStart?: string): Promise<{ all: any[]; total: number }> {
+    const params: Record<string, unknown> = {};
+    if (updatedAtStart) {
+      params.updated_at_start = updatedAtStart;
+      params.updated_at_end = fmtDateTime(new Date());
+    }
+    const first = await this.kgdClient.listGoods({ pageNo: 1, pageSize: PAGE_SIZE, ...params });
+    const firstList = first.data ?? [];
+    const total = Math.min(first.count ?? firstList.length, 10_000);
+    const all = [...firstList];
+    const pageCount = Math.ceil(total / PAGE_SIZE);
+    let next = 2;
+    const worker = async () => {
+      while (next <= pageCount) {
+        const pageNo = next++;
+        const { data } = await this.kgdClient.listGoods({ pageNo, pageSize: PAGE_SIZE, ...params });
+        all.push(...(data ?? []));
+      }
+    };
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    return { all, total };
+  }
+
+  /** 写入商品缓存（增量/全量共用；raw 保留快工单原始字段供本地过滤） */
+  private async upsertGoods(all: any[]) {
+    if (!all.length) return;
+    const rows = all.map((g: any) => ({
+      goodsId: g.id,
+      code: g.code ?? '',
+      name: g.name ?? '',
+      standard: g.standard ?? '',
+      categoryPathNames: g.category_path_names ?? '',
+      source: Number(g.source ?? 0),
+      sourceName: g.source_name ?? '',
+      unitName: g.unit?.name ?? '',
+      sellingMoney: g.selling_money ?? null,
+      isEnable: g.is_enable != null ? Number(g.is_enable) : 1,
+      updatedAt: g.updated_at ?? null,
+      fieldValueList: g.fieldValueList ?? [],
+      raw: g,
+    }));
+    await this.goods.upsert(rows, ['goodsId']);
+  }
+
   /** 触发一次即时同步（写操作后 / 手动刷新时调用，可等待完成）。
-   *  forceFull=true 强制全量对账；reportWindowDays>0 时报工记录改为覆盖最近 N 天窗口（手动刷新短按） */
-  requestSync(forceFull = false, reportWindowDays = 0): Promise<void> {
-    return this.syncNow(forceFull, reportWindowDays);
+   *  forceFull=true 强制全量对账；reportWindowDays>0 时报工记录改为覆盖最近 N 天窗口（手动刷新短按）；
+   *  throttleMs>0 用于查询前同步（见 syncNow，默认不节流） */
+  requestSync(forceFull = false, reportWindowDays = 0, throttleMs = 0): Promise<void> {
+    return this.syncNow(forceFull, reportWindowDays, throttleMs);
   }
 
   /**
