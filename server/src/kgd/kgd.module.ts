@@ -10,13 +10,14 @@ import { KgdGoodsCache } from './kgd-goods-cache.entity';
 import { KgdReportCache } from '../report/kgd-report-cache.entity';
 import { User } from '../auth/users.entity';
 import { KgdSyncMeta } from './kgd-sync-meta.entity';
+import { KgdWasteItem } from './kgd-waste-item.entity';
 
 @Global()
 @Module({
   imports: [
-    TypeOrmModule.forFeature([KgdToken, KgdBillCache, KgdTaskCache, KgdGoodsCache, KgdReportCache, User, KgdSyncMeta]),
+    TypeOrmModule.forFeature([KgdToken, KgdBillCache, KgdTaskCache, KgdGoodsCache, KgdReportCache, User, KgdSyncMeta, KgdWasteItem]),
   ],
   providers: [KgdAuthService, KgdClientService, KgdSyncService],
-  exports: [KgdAuthService, KgdClientService, KgdSyncService],
+  exports: [KgdAuthService, KgdClientService, KgdSyncService, TypeOrmModule],
 })
 export class KgdModule {}
