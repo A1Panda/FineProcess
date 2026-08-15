@@ -25,8 +25,9 @@ const GOODS_FULL_RECONCILE_SEC = 24 * 60 * 60; // 商品全量对账间隔：每
 const BILL_ACTIVE_STATUSES = [1, 2, 5]; // 加工单活动状态：1=未开始 2=进行中 5=已暂停（5 纳入增量，缓存才能及时反映暂停；前端仍按 1,2 过滤显示）
 /** 任务活动状态：未开始(1)+进行中(2)+已暂停(4) */
 const TASK_ACTIVE_STATUSES = [1, 2, 4];
-/** 全量同步时间窗口：只拉近一年内的数据，超过一年的历史不获取。
- *  报工按 report_time、任务按 updated_at 服务端过滤；本地超过一年的记录保留不误删（见全量清理保护） */
+/** 全量同步时间窗口：所有全量对账只拉近一年内的数据，超过一年的历史不获取。
+ *  报工按 report_time、任务按 updated_at、加工单按 created_at、商品按 updated_at 服务端过滤；
+ *  本地超过一年的记录保留不误删（见各全量清理保护） */
 const FULL_SYNC_WINDOW_DAYS = 365;
 /** 公版 Web 报工记录列表每页条数（实测 pageSize 200 有效，全量 3665 条约 19 页） */
 const WEB_PAGE_SIZE = 200;
@@ -176,8 +177,9 @@ export class KgdSyncService implements OnModuleInit {
    * 加工单滚动同步：活动状态（未开始+生产中+已暂停）增量为主 + 定期全量对账
    * - 增量：只拉 BILL_ACTIVE_STATUSES 状态，请求量从 40+ 页降到 3 页，毫秒级完成
    *   （含 5=已暂停：快工单暂停的单若不入增量，本地缓存将停留在旧"进行中"状态，前端刷新仍显示）
-   * - 全量对账：首次 / 距上次对账超过 BILL_FULL_RECONCILE_SEC / 手动刷新强制时执行，拉全量并清理远程已删除记录、刷新已完成/已取消历史
-   *   （加工单量小约千余条，且需保证暂停/完成状态准确，保持全量拉取；时间窗口仅用于报工与任务）
+   * - 全量对账：首次 / 距上次对账超过 BILL_FULL_RECONCILE_SEC / 手动刷新强制时执行，按 created_at 拉近一年
+   *   （超过一年的历史不获取；produce_bill/list 支持 created_at_start 服务端过滤，实测一年窗口=全量）
+   *   并清理远程已删除记录、刷新已完成/已取消历史；清理仅限"近一年内创建"的失效单据，超一年本地历史保留
    */
   private async syncBills(forceFull = false) {
     const start = Date.now();
@@ -186,20 +188,24 @@ export class KgdSyncService implements OnModuleInit {
     const fullDue = forceFull || !lastFull || lastFull < minusSeconds(now, BILL_FULL_RECONCILE_SEC);
 
     if (fullDue) {
-      const { all, total } = await this.fetchBills();
+      // 全量只拉近一年（created_at 窗口）：超过一年的历史不再获取
+      const { all, total } = await this.fetchBills(undefined, minusDays(now, FULL_SYNC_WINDOW_DAYS));
       await this.upsertBills(all);
-      // 全量未截断时才清理本地已删除记录，避免误删
+      // 全量未截断时才清理本地已删除记录，避免误删；
+      // 窗口只拉近一年，清理仅限"近一年内创建"的单据，超过一年或创建时间未知的本地记录保留不误删
       if (total < 10_000 && all.length) {
         const ids = all.map((b: any) => b.id).filter((id: any) => id != null);
+        const cutoff = minusDays(now, FULL_SYNC_WINDOW_DAYS);
         const del = await this.bills
           .createQueryBuilder()
           .delete()
           .where('billId NOT IN (:...ids)', { ids })
+          .andWhere('createdAt >= :cutoff', { cutoff })
           .execute();
-        if (del.affected) this.logger.log(`加工单缓存清理完成：删除本地已失效 ${del.affected} 条`);
+        if (del.affected) this.logger.log(`加工单缓存清理完成：删除本地已失效 ${del.affected} 条（仅限近一年创建）`);
       }
       await this.syncMeta.upsert({ key: 'bill_full_sync_at', value: now }, ['key']);
-      this.logger.log(`加工单同步完成(全量对账)：${all.length} 条，耗时 ${Date.now() - start}ms`);
+      this.logger.log(`加工单同步完成(全量对账)：近一年 ${all.length} 条，耗时 ${Date.now() - start}ms`);
       return;
     }
 
@@ -212,9 +218,14 @@ export class KgdSyncService implements OnModuleInit {
     this.logger.log(`加工单同步完成(活动)：${done} 条，耗时 ${Date.now() - start}ms`);
   }
 
-  /** 分页拉取加工单（status 为空即全量），并发拉取剩余页 */
-  private async fetchBills(status?: number): Promise<{ all: any[]; total: number }> {
-    const params = status !== undefined ? { status } : {};
+  /** 分页拉取加工单（status 为空即全量；createdAfter 非空时按 created_at 时间窗口拉取），并发拉取剩余页 */
+  private async fetchBills(status?: number, createdAfter?: string): Promise<{ all: any[]; total: number }> {
+    const params: Record<string, unknown> = {};
+    if (status !== undefined) params.status = status;
+    if (createdAfter) {
+      params.created_at_start = createdAfter;
+      params.created_at_end = fmtDateTime(new Date());
+    }
     const first = await this.kgdClient.listProduceBills({ pageNo: 1, pageSize: PAGE_SIZE, ...params });
     const firstList = first.data ?? [];
     const total = Math.min(first.count ?? firstList.length, 10_000);
@@ -247,6 +258,7 @@ export class KgdSyncService implements OnModuleInit {
       planStart: b.start_produce_date ?? null,
       planEnd: b.end_produce_date ?? null,
       deliveryDate: b.delivery_date ?? null,
+      createdAt: b.created_at ?? null,
     }));
     await this.bills.upsert(rows, ['billId']);
   }
@@ -273,7 +285,8 @@ export class KgdSyncService implements OnModuleInit {
       // 全量：用公版 order_number 校准真实工艺顺序（OpenAPI 返回按 id 升序，非真实顺序；
       // 快工单真实顺序由可拖动的 order_number 决定，需登录公版 Web 接口获取）
       try {
-        const orders = await this.kgdClient.fetchWebCraftOrders();
+        // 工艺顺序校准只拉近一年创建的加工单（与任务全量窗口一致），超过一年的历史不校准
+        const orders = await this.kgdClient.fetchWebCraftOrders(minusDays(now, FULL_SYNC_WINDOW_DAYS));
         await this.applyCraftSeq(orders);
         this.logger.log(`工艺顺序校准完成：更新 ${orders.size} 条（来源：公版 order_number）`);
       } catch (e) {

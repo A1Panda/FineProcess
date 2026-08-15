@@ -39,6 +39,10 @@ export class KgdBillCache {
   @Column({ name: 'delivery_date', type: 'varchar', length: 32, nullable: true })
   deliveryDate: string | null;
 
+  /** 加工单创建时间（快工单 created_at，全量对账按此字段拉取近一年窗口；清理保护依据） */
+  @Column({ name: 'created_at', type: 'varchar', length: 32, nullable: true })
+  createdAt: string | null;
+
   @Column({ type: 'json', nullable: true })
   raw: unknown;
 

@@ -8,6 +8,12 @@ import { KgdAuthService } from './kgd-auth.service';
 const WEB_SIGN_SALT = '81ad0be7fd53914f8cf8193c1886f635';
 const WEB_CHANNEL = 1; // 公版 WEB 端 channel
 
+/** 格式化为 'YYYY-MM-DD HH:mm:ss'（公版接口 created_at 窗口过滤格式） */
+function fmtDateTimeWeb(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 /** 快工单 OpenAPI 统一封装：自动注入 X-TOKEN，集中处理返回结构 */
 @Injectable()
 export class KgdClientService {
@@ -202,18 +208,19 @@ export class KgdClientService {
   }
 
   /**
-   * 公版分页拉取全部加工单，解析每单 craft_list 的工序顺序。
+   * 公版分页拉取加工单，解析每单 craft_list 的工序顺序。
    * 返回 Map<taskId, orderNumber>（order_number 即快工单真实工艺顺序，用户可拖动调整；
    * OpenAPI 不返回该字段，其数组顺序按 id 升序，不可作为顺序依据）
+   * @param createdAfter 非空时只拉近 created_at 该时间之后的加工单（全量对账按一年窗口）
    */
-  async fetchWebCraftOrders(): Promise<Map<number, number>> {
+  async fetchWebCraftOrders(createdAfter?: string): Promise<Map<number, number>> {
     const { token, enterpriseId } = await this.loginWeb();
     const orders = new Map<number, number>();
     const PAGE = 200;
     let page = 1;
     for (;;) {
       const ts = String(Math.floor(Date.now() / 1000));
-      const resp = await this.http.post('/api/produce_bill/list', {
+      const payload: Record<string, unknown> = {
         pageNo: page,
         pageSize: PAGE,
         timestamp: ts,
@@ -221,7 +228,12 @@ export class KgdClientService {
         channel: WEB_CHANNEL,
         token,
         enterprise_id: enterpriseId,
-      });
+      };
+      if (createdAfter) {
+        payload.created_at_start = createdAfter;
+        payload.created_at_end = fmtDateTimeWeb(new Date());
+      }
+      const resp = await this.http.post('/api/produce_bill/list', payload);
       const body = resp.data;
       if (!body?.success) throw new Error(`公版加工单列表失败: ${body?.msg ?? '未知错误'}`);
       const rows: any[] = body.data ?? [];
