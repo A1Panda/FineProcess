@@ -136,7 +136,7 @@ export class KgdSyncService implements OnModuleInit {
     // 一次性加载全部同步游标/对账时间，各模块共享，避免逐个 findOneBy（每轮省约 6 次 DB 查询）
     await this.loadMeta();
     const jobs: { name: string; run: () => Promise<SyncStat> }[] = [
-      { name: '加工单', run: () => this.syncBills(forceFull) },
+      { name: '加工单', run: () => this.syncBills(forceFull, reportWindowDays) },
       { name: '任务', run: () => this.syncTasks(forceFull, reportWindowDays) },
       { name: '报工记录', run: () => this.syncReportRecords(forceFull, reportWindowDays) },
       { name: '商品', run: () => this.syncGoods(forceFull) },
@@ -246,11 +246,14 @@ export class KgdSyncService implements OnModuleInit {
    * 加工单滚动同步：活动状态（未开始+生产中+已暂停）增量为主 + 定期全量对账
    * - 增量：只拉 BILL_ACTIVE_STATUSES 状态，请求量从 40+ 页降到 3 页，毫秒级完成
    *   （含 5=已暂停：快工单暂停的单若不入增量，本地缓存将停留在旧"进行中"状态，前端刷新仍显示）
+   * - 近 N 天已完成补拉：快工单整单完成（status=3）不在活动状态增量范围，
+   *   若不补拉本地会一直停留旧"进行中"状态（完工预测/工序进度误判未完成）；
+   *   用 updated_at 窗口精准补拉（实测近 3 天仅 20 条，1 页完成）
    * - 全量对账：首次 / 距上次对账超过 BILL_FULL_RECONCILE_SEC / 手动刷新强制时执行，按 created_at 拉近一年
    *   （超过一年的历史不获取；produce_bill/list 支持 created_at_start 服务端过滤，实测一年窗口=全量）
    *   并清理远程已删除记录、刷新已完成/已取消历史；清理仅限"近一年内创建"的失效单据，超一年本地历史保留
    */
-  private async syncBills(forceFull = false): Promise<SyncStat> {
+  private async syncBills(forceFull = false, reportWindowDays = 0): Promise<SyncStat> {
     const start = Date.now();
     const now = fmtDateTime(new Date());
     const fullDue = forceFull || this.fullDue('bill_full_sync_at', now, BILL_FULL_RECONCILE_SEC);
@@ -285,17 +288,31 @@ export class KgdSyncService implements OnModuleInit {
       await this.upsertBills(all);
       pulled += all.length;
     }
-    this.logger.log(`加工单同步完成(活动)：拉取 ${pulled} 条，耗时 ${Date.now() - start}ms`);
+    // 补拉近 N 天 updated_at 的已完成加工单（与任务模块同款）：整单完成不在活动状态增量范围，
+    // 不补拉则本地缓存停留在旧"进行中"状态，完工预测/工序进度误判未完成；每日全量对账兜底
+    const doneDays = reportWindowDays > 0 ? reportWindowDays : 3;
+    const { all: doneBills } = await this.fetchBills(3, undefined, minusDays(now, doneDays));
+    let donePulled = 0;
+    if (doneBills.length) {
+      await this.upsertBills(doneBills);
+      donePulled = doneBills.length;
+      pulled += donePulled;
+    }
+    this.logger.log(`加工单同步完成(活动+近${doneDays}天已完成)：拉取 ${pulled} 条，耗时 ${Date.now() - start}ms`);
     return { pulled, cleaned: 0 };
   }
 
-  /** 分页拉取加工单（status 为空即全量；createdAfter 非空时按 created_at 时间窗口拉取） */
-  private async fetchBills(status?: number, createdAfter?: string): Promise<{ all: any[]; total: number }> {
+  /** 分页拉取加工单（status 为空即全量；createdAfter 按 created_at 窗口、updatedAfter 按 updated_at 窗口） */
+  private async fetchBills(status?: number, createdAfter?: string, updatedAfter?: string): Promise<{ all: any[]; total: number }> {
     const params: Record<string, unknown> = {};
     if (status !== undefined) params.status = status;
     if (createdAfter) {
       params.created_at_start = createdAfter;
       params.created_at_end = fmtDateTime(new Date());
+    }
+    if (updatedAfter) {
+      params.updated_at_start = updatedAfter;
+      params.updated_at_end = fmtDateTime(new Date());
     }
     return this.fetchPaged((pageNo) => this.kgdClient.listProduceBills({ pageNo, pageSize: PAGE_SIZE, ...params }));
   }

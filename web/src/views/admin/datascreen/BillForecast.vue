@@ -34,7 +34,7 @@
       >
         <template #prefix><el-icon :size="15"><Search /></el-icon></template>
       </el-input>
-      <button class="refresh-btn" :class="{ spinning: loading }" aria-label="刷新数据" @click="load">
+      <button class="refresh-btn" :class="{ spinning: refreshing }" aria-label="刷新数据" @click="refreshData">
         <el-icon :size="16"><Refresh /></el-icon>
       </button>
     </div>
@@ -162,13 +162,16 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import api from '../../../api'
 
 const list = ref([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = 10
+
 const loading = ref(false)
+const refreshing = ref(false)
 const keyword = ref('')
 const stats = reactive({ total: 0, withData: 0, weekReported: 0, risk: 0 })
 /** 当前展开的每日分工序明细：{ code, date, crafts, left, transform } */
@@ -295,6 +298,22 @@ async function load() {
     Object.assign(stats, res.stats || {})
   } finally {
     loading.value = false
+  }
+}
+
+/** 刷新：先短按同步一次（加工单/任务补拉近 3 天已完成，刷新后已完成的订单从预测中移除），再重新加载列表 */
+async function refreshData() {
+  refreshing.value = true
+  try {
+    // 同步可能触发每天一次的全量对账（最长约 40s），单独放宽超时避免 30s 默认超时误报失败
+    const res = await api.post('/tasks/sync', null, { timeout: 120000 })
+    if (res?.duration != null) ElMessage.success(`数据已刷新（耗时 ${res.duration}ms）`)
+    await load()
+  } catch (e) {
+    const timeout = e?.code === 'ECONNABORTED' || /timeout/i.test(e?.message || '')
+    ElMessage.error(timeout ? '同步耗时较长，已重试或稍后再试' : (e.response?.data?.message || '刷新失败'))
+  } finally {
+    refreshing.value = false
   }
 }
 
