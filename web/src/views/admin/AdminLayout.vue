@@ -134,7 +134,7 @@ const isManager = computed(() => auth.user?.role === 'manager')
 
 const tabs = [
   { path: '/admin/users', label: '权限管理', icon: 'User' },
-  { path: '/admin/data/report-stats', label: '数据大屏', icon: 'DataAnalysis' },
+  { path: '/admin/data/bill-progress', label: '数据大屏', icon: 'DataAnalysis' },
 ].filter((t) => (t.path === '/admin/users' ? isAdmin.value : true))
 
 /** 数据大屏模块列表：新增模块在此追加，侧边子菜单与移动端子导航同步生成 */

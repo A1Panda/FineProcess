@@ -23,10 +23,10 @@ const router = createRouter({
       component: AdminLayout,
       meta: { requiresAuth: true, adminOrMgr: true },
       children: [
-        { path: '', redirect: '/admin/data/report-stats' },
+        { path: '', redirect: '/admin/data/bill-progress' },
         { path: 'users', name: 'admin-users', component: AdminUsers, meta: { title: '权限管理', adminOnly: true } },
         // 数据大屏：统一分组入口，具体模块走子路由（未来新增模块在此追加）
-        { path: 'data', redirect: '/admin/data/report-stats' },
+        { path: 'data', redirect: '/admin/data/bill-progress' },
         { path: 'data/report-stats', name: 'admin-data-report-stats', component: AdminDataReportStats, meta: { title: '报工统计' } },
         { path: 'data/bill-progress', name: 'admin-data-bill-progress', component: AdminDataBillProgress, meta: { title: '加工单进度' } },
         { path: 'data/craft-trend', name: 'admin-data-craft-trend', component: AdminDataCraftTrend, meta: { title: '工序产出趋势' } },
