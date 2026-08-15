@@ -8,8 +8,8 @@
             <el-icon :size="18"><Back /></el-icon>
           </button>
           <div class="header-text">
-            <h1 class="title">管理员界面</h1>
-            <p class="subtitle">当前管理员：{{ auth.user?.name }}</p>
+            <h1 class="title">{{ isManager ? '数据大屏' : '管理员界面' }}</h1>
+            <p class="subtitle">当前用户：{{ auth.user?.name }}</p>
           </div>
         </div>
         <div class="header-right">
@@ -67,21 +67,52 @@
     <div class="admin-body">
       <!-- 桌面端：左侧功能导航 -->
       <aside class="admin-side">
-        <el-menu class="side-menu" :default-active="$route.path" router>
-          <el-menu-item index="/admin/users">
+        <el-menu class="side-menu" :default-active="$route.path" :default-openeds="['data']" router>
+          <el-menu-item v-if="isAdmin" index="/admin/users">
             <el-icon><User /></el-icon>
             <span>权限管理</span>
           </el-menu-item>
-          <el-menu-item index="/admin/data">
-            <el-icon><DataAnalysis /></el-icon>
-            <span>数据大屏</span>
-            <span class="menu-tag">开发中</span>
-          </el-menu-item>
+          <!-- 数据大屏：分组入口，模块按子菜单扩展 -->
+          <el-sub-menu index="data">
+            <template #title>
+              <el-icon><DataAnalysis /></el-icon>
+              <span>数据大屏</span>
+            </template>
+            <el-menu-item index="/admin/data/report-stats">
+              <el-icon><Calendar /></el-icon>
+              <span>报工统计</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/data/bill-progress">
+              <el-icon><List /></el-icon>
+              <span>加工单进度</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/data/craft-trend">
+              <el-icon><TrendCharts /></el-icon>
+              <span>工序产出趋势</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/data/bill-forecast">
+              <el-icon><AlarmClock /></el-icon>
+              <span>完工预测</span>
+            </el-menu-item>
+          </el-sub-menu>
         </el-menu>
       </aside>
 
       <!-- 内容区 -->
       <main class="admin-main">
+        <!-- 数据大屏子导航（移动端；桌面端由侧边菜单承载） -->
+        <nav v-if="isDataRoute" class="data-subnav" aria-label="数据大屏模块">
+          <button
+            v-for="d in dataTabs"
+            :key="d.path"
+            class="dsn-item"
+            :class="{ active: $route.path === d.path }"
+            @click="router.push(d.path)"
+          >
+            <el-icon :size="14"><component :is="d.icon" /></el-icon>
+            <span>{{ d.label }}</span>
+          </button>
+        </nav>
         <router-view />
       </main>
     </div>
@@ -90,27 +121,46 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 import { isDark as getDark, toggleTheme } from '../../utils/theme'
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
+
+const isAdmin = computed(() => auth.user?.role === 'admin')
+const isManager = computed(() => auth.user?.role === 'manager')
 
 const tabs = [
   { path: '/admin/users', label: '权限管理', icon: 'User' },
-  { path: '/admin/data', label: '数据大屏', icon: 'DataAnalysis' },
+  { path: '/admin/data/report-stats', label: '数据大屏', icon: 'DataAnalysis' },
+].filter((t) => (t.path === '/admin/users' ? isAdmin.value : true))
+
+/** 数据大屏模块列表：新增模块在此追加，侧边子菜单与移动端子导航同步生成 */
+const dataTabs = [
+  { path: '/admin/data/report-stats', label: '报工统计', icon: 'Calendar' },
+  { path: '/admin/data/bill-progress', label: '加工单进度', icon: 'List' },
+  { path: '/admin/data/craft-trend', label: '工序产出趋势', icon: 'TrendCharts' },
+  { path: '/admin/data/bill-forecast', label: '完工预测', icon: 'AlarmClock' },
 ]
+
+/** 当前是否处于数据大屏模块下（用于移动端显示子导航） */
+const isDataRoute = computed(() => route.path.startsWith('/admin/data'))
 
 const avatarChar = computed(() => auth.user?.name?.[0] || '管')
 
 /** 岗位名：优先显示快工单岗位（如 系统管理员），无则按系统角色兜底 */
 const roleNameText = computed(
-  () => auth.user?.roleName || (auth.user?.role === 'admin' ? '管理员' : '工人'),
+  () => auth.user?.roleName || (auth.user?.role === 'admin' ? '管理员' : auth.user?.role === 'manager' ? '车间主管' : '工人'),
 )
 
 const permissionText = computed(() =>
-  auth.user?.role === 'admin' ? '管理员：可管理用户权限与系统功能' : '工人：无管理员权限',
+  auth.user?.role === 'admin'
+    ? '管理员：可管理用户权限与系统功能'
+    : auth.user?.role === 'manager'
+      ? '车间主管：可查看数据大屏'
+      : '工人：无管理员权限',
 )
 
 function onCommand(cmd) {
@@ -318,12 +368,14 @@ function onToggleTheme(e) {
     background: transparent;
   }
 
-  .side-menu :deep(.el-menu-item) {
+  .side-menu :deep(.el-menu-item),
+  .side-menu :deep(.el-sub-menu__title) {
     color: var(--muted-foreground);
     height: 44px;
   }
 
-  .side-menu :deep(.el-menu-item:hover) {
+  .side-menu :deep(.el-menu-item:hover),
+  .side-menu :deep(.el-sub-menu__title:hover) {
     background: var(--muted, rgba(128, 128, 128, 0.08));
     color: var(--foreground);
   }
@@ -334,19 +386,57 @@ function onToggleTheme(e) {
     font-weight: 600;
   }
 
-  .menu-tag {
-    margin-left: auto;
-    font-size: 11px;
-    padding: 1px 6px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    color: var(--muted-foreground);
-    line-height: 1.6;
+  .side-menu :deep(.el-sub-menu .el-menu-item) {
+    padding-left: 46px !important;
+    min-width: 0;
   }
 
   .admin-main {
     flex: 1;
     min-width: 0;
+  }
+}
+
+/* ===== 数据大屏子导航（仅移动端显示，桌面端走侧边子菜单） ===== */
+.data-subnav {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 10px;
+  scrollbar-width: none;
+}
+
+.data-subnav::-webkit-scrollbar {
+  display: none;
+}
+
+.dsn-item {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.dsn-item.active {
+  background: var(--primary-soft, rgba(59, 130, 246, 0.1));
+  border-color: transparent;
+  color: var(--primary);
+}
+
+@media (min-width: 768px) {
+  .data-subnav {
+    display: none;
   }
 }
 </style>

@@ -31,6 +31,14 @@ export class KgdReportCache {
   @Column({ name: 'report_user_name', length: 64, default: '' })
   reportUserName: string;
 
+  /**
+   * 创建者（报工操作登录用户）快工单用户ID。代报时 reportUserId 是报工人、
+   * creatorId 才是操作人；修改/删除的归属校验以创建者为准。
+   * 纯同步记录（OpenAPI 无创建者信息）该列为空，校验回退到报工人。
+   */
+  @Column({ name: 'creator_id', type: 'varchar', length: 32, nullable: true })
+  creatorId: string | null;
+
   @Column({ name: 'valid_num', length: 32, default: '0' })
   validNum: string;
 
@@ -52,6 +60,14 @@ export class KgdReportCache {
 
   @Column({ name: 'remark', type: 'varchar', length: 500, nullable: true })
   remark: string | null;
+
+  /**
+   * 不良品项明细（JSON 字符串：[{code,name,num}]）。
+   * 来自快工单报工记录 report_waste_list（waste_item.code/name + num），
+   * 供报工记录弹窗点击"不良品"展开查看不良品原因。
+   */
+  @Column({ name: 'waste_list', type: 'text', nullable: true })
+  wasteList: string | null;
 
   /**
    * 最近同步时间（普通列而非 UpdateDateColumn：

@@ -1,11 +1,22 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { KgdClientService } from '../kgd/kgd-client.service';
 import { KgdSyncService } from '../kgd/kgd-sync.service';
 import { KgdBillCache } from '../kgd/kgd-bill-cache.entity';
 import { KgdTaskCache } from '../kgd/kgd-task-cache.entity';
+import { KgdReportCache } from '../report/kgd-report-cache.entity';
 import { JwtPayload } from '../auth/auth.service';
+
+/** 临期提醒天数：交期距今天 <= 该值视为临期（含今天到期） */
+const BILL_DUE_SOON_DAYS = 3;
+
+/** 取今天日期 'YYYY-MM-DD'（本地时区） */
+function fmtToday(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 
 /** 快工单生产任务 -> 前端展示结构 */
 export interface TaskView {
@@ -52,6 +63,146 @@ export interface CraftProgress {
   wasteNum: number;
 }
 
+/** 加工单进度统计快照（管理员数据大屏顶部统计条） */
+export interface BillProgressStats {
+  /** 未编程（未开始 status=1）加工单数 */
+  unprogrammed: number;
+  /** 加工单总数（当前关键词范围） */
+  total: number;
+  /** 进行中加工单数 */
+  inProgress: number;
+  /** 已逾期（未完成且交期已过） */
+  overdue: number;
+  /** 临期（3 天内到期） */
+  dueSoon: number;
+}
+
+/** 工序产出趋势：单工序单日产量快照 */
+export interface CraftTrendPoint {
+  date: string;
+  /** 当日良品数 */
+  valid: number;
+  /** 当日废品数 */
+  waste: number;
+  /** 当日报工次数 */
+  cnt: number;
+}
+
+/** 工序产出趋势：单工序汇总（近 N 天） */
+export interface CraftTrendItem {
+  name: string;
+  points: CraftTrendPoint[];
+  totals: {
+    valid: number;
+    waste: number;
+    cnt: number;
+    /** 合格率（良品/(良品+废品)，无废品数据为 100） */
+    passRate: number;
+  };
+}
+
+/** 完工预测：工序明细（一道工序把整单数量做一遍 = 1 件次） */
+export interface BillForecastCraft {
+  name: string;
+  /** 1=未开始 2=进行中 3=已完成 */
+  status: number;
+  statusName: string;
+  /** 该工序计划数 */
+  plan: number;
+  /** 该工序已完成数 */
+  valid: number;
+  /** 近 7 天该工序报工总量 */
+  weekValid: number;
+  /** 近 7 天该工序有报工的天数 */
+  weekActive: number;
+  /** 该工序日均件次（近 7 天报工 / 有报工天数），无报工为 0 */
+  daily: number;
+  /** 该工序预计还需天数（未完成且近 7 天有报工才有值），null=无法按工序估算 */
+  etaDays: number | null;
+}
+
+/** 工序明细的基础字段（周报工/日均/预估由后端按报工记录补充） */
+type BillForecastCraftBase = Omit<BillForecastCraft, 'weekValid' | 'weekActive' | 'daily' | 'etaDays'>;
+
+/** 完工预测：进行中加工单行（近 7 天报工历史 + 按工序件次估算完成日期） */
+export interface BillForecastRow {
+  code: string;
+  htNo: string | null;
+  goodsName: string;
+  spec: string;
+  num: number;
+  unitName: string;
+  status: number;
+  statusName: string;
+  deliveryDate: string | null;
+  /** 累计已完成件次（各工序良品之和，全部历史） */
+  reported: number;
+  /** 剩余件次 = 总件次 - 已完成件次 */
+  remaining: number;
+  /** 完成百分比（已完成件次 / 总件次，0-100） */
+  progressPercent: number;
+  /** 近 7 天每日报工（件次） */
+  weekDays: { date: string; valid: number }[];
+  /** 近 7 天每日报工明细（按工序拆分，仅含当日有报工的工序） */
+  weekDaysDetail: { date: string; crafts: { name: string; valid: number }[] }[];
+  /** 近 7 天报工总量（件次） */
+  weekTotal: number;
+  /** 有报工的天数 */
+  activeDays: number;
+  /** 日均件次（近 7 天总量 / 有报工天数），无报工为 0 */
+  dailyAvg: number;
+  /** 预计还需天数（按日均件次），无数据为 null */
+  etaDays: number | null;
+  /** 预计完成日期（YYYY-MM-DD），无数据为 null */
+  etaDate: string | null;
+  /** 预计完成日晚于交期 = 预计逾期 */
+  overrunDelivery: boolean;
+  /** 工序明细（按工艺顺序） */
+  crafts: BillForecastCraft[];
+  /** 剩余工序数（未完成） */
+  remainingCrafts: number;
+  /** 已完成工序数 */
+  doneCrafts: number;
+}
+
+/** 完工预测统计快照 */
+export interface BillForecastStats {
+  /** 进行中加工单总数 */
+  total: number;
+  /** 有报工数据可估算的单数 */
+  withData: number;
+  /** 近 7 天报工总量（全部进行中单） */
+  weekReported: number;
+  /** 预计逾期风险单数 */
+  risk: number;
+}
+
+/** 加工单进度行（管理员数据大屏） */
+export interface BillProgressRow {
+  code: string;
+  htNo: string | null;
+  goodsName: string;
+  spec: string;
+  num: number;
+  unitName: string;
+  status: number;
+  statusName: string;
+  deliveryDate: string | null;
+  /** 是否已逾期（未完成且交期早于今天） */
+  overdue: boolean;
+  /** 是否临期（3 天内到期） */
+  dueSoon: boolean;
+  /** 距交期天数：负数=已逾期天数，0=今天到期，null=无交期 */
+  dueInDays: number | null;
+  /** 总工序数 */
+  totalCrafts: number;
+  /** 已完成工序数 */
+  doneCrafts: number;
+  /** 整体进度：各工序完成百分比平均（0-100） */
+  progressPercent: number;
+  crafts: CraftProgress[];
+}
+
 @Injectable()
 export class TasksService {
   constructor(
@@ -59,6 +210,7 @@ export class TasksService {
     private readonly sync: KgdSyncService,
     @InjectRepository(KgdTaskCache) private readonly taskCache: Repository<KgdTaskCache>,
     @InjectRepository(KgdBillCache) private readonly billCache: Repository<KgdBillCache>,
+    @InjectRepository(KgdReportCache) private readonly reportCache: Repository<KgdReportCache>,
   ) {}
 
   private toView(t: KgdTaskCache, deliveryDate: string | null = null): TaskView {
@@ -223,7 +375,7 @@ export class TasksService {
     return map;
   }
 
-  /** 生成加工单工序进度：同单任务按工艺顺序，每道工序完成百分比 = 良品+不良 / 计划数 */
+  /** 生成加工单工序进度：同单任务按工艺顺序，每道工序完成百分比 = 良品 / 计划数（不良品需返工不算产出，与自动完工/完工预测口径一致） */
   private buildCraftProgress(chain: KgdTaskCache[]): CraftProgress[] {
     return chain.map((c) => {
       const num = Number(c.num) || 0;
@@ -232,7 +384,7 @@ export class TasksService {
       // 累计良品达到计划数 → 显示层自动标记完成（即使快工单状态未同步，如远程拒绝自动完工）
       const autoDone = num > 0 && valid >= num && Number(c.status) !== 3;
       const status = autoDone ? 3 : Number(c.status);
-      const percent = num > 0 ? Math.min(100, Math.round(((valid + waste) / num) * 100)) : 0;
+      const percent = num > 0 ? Math.min(100, Math.round((valid / num) * 100)) : 0;
       return {
         craftName: c.craftName,
         statusName: autoDone ? '已完成' : c.statusName,
@@ -448,5 +600,419 @@ export class TasksService {
         craftProgress: this.buildCraftProgress(chain),
       };
     });
+  }
+
+  /**
+   * 管理员数据大屏：加工单进度列表（全量加工单 + 每单工序进度 + 逾期/临期标记）。
+   * - status：多值过滤（逗号分隔），缺省=全部状态
+   * - keyword：单号 / HT图号 / 产品名模糊搜索
+   * - sortBy：delivery（默认，逾期/临期优先 + 交期从早到晚）| progress（进度升序）| remaining（剩余工序数降序）
+   * - overdueOnly：只看已逾期加工单
+   * - 数据取自本地缓存（kgd_bill_cache + kgd_task_cache），秒级响应；整体进度 = 各工序完成百分比平均
+   */
+  async getBillProgress(
+    options: {
+      status?: number[];
+      keyword?: string;
+      sortBy?: string;
+      overdueOnly?: boolean;
+      /** 只看临期（3 天内到期）加工单 */
+      dueSoonOnly?: boolean;
+      /** 特殊筛选：done-today=今日已完成（未编程=未开始 status=1，走 status 参数） */
+      scope?: 'done-today';
+      page?: number;
+      pageSize?: number;
+    } = {},
+  ): Promise<{ list: BillProgressRow[]; total: number; stats: BillProgressStats; page: number; pageSize: number }> {
+    const pageNum = Math.max(1, Number(options.page) || 1);
+    const size = Math.min(100, Math.max(1, Number(options.pageSize) || 20));
+    const kw = (options.keyword ?? '').trim();
+    const today = fmtToday();
+
+    // 1) 基础过滤：状态 + 关键词（默认排除已取消 status=4；已完成但无任何报工记录的单视为异常，一并排除）
+    const qb = this.billCache.createQueryBuilder('b');
+    if (options.status?.length) qb.andWhere('b.status IN (:...status)', { status: options.status });
+    else qb.andWhere('b.status <> 4');
+    qb.andWhere(
+      'NOT (b.status = 3 AND NOT EXISTS (SELECT 1 FROM kgd_report_cache r WHERE r.bill_code = b.code))',
+    );
+    // 特殊筛选：今日已完成（status=3 且工序 end_time 在今天）；未编程=未开始(status=1)由 status 参数承载
+    if (options.scope === 'done-today') {
+      const todayStart = `${today} 00:00:00`;
+      const todayEnd = `${this.daysAhead(today, 1)} 00:00:00`;
+      qb.andWhere(
+        "b.status = 3 AND EXISTS (SELECT 1 FROM kgd_task_cache t WHERE t.bill_code = b.code AND t.end_time IS NOT NULL AND t.end_time <> '' AND t.end_time >= :todayStart AND t.end_time < :todayEnd)",
+        { todayStart, todayEnd },
+      );
+    }
+    if (kw) qb.andWhere('(b.code LIKE :kw OR b.htNo LIKE :kw OR b.goodsName LIKE :kw)', { kw: `%${kw}%` });
+    const bills = await qb.getMany();
+
+    // 2) 统计快照（仅随关键词，不随状态筛选/分页）：未编程 / 总单 / 进行中 / 已逾期 / 临期
+    const soonDate = this.daysAhead(today, BILL_DUE_SOON_DAYS);
+    const statsQb = this.billCache.createQueryBuilder('b');
+    statsQb.andWhere('b.status <> 4');
+    statsQb.andWhere(
+      'NOT (b.status = 3 AND NOT EXISTS (SELECT 1 FROM kgd_report_cache r WHERE r.bill_code = b.code))',
+    );
+    if (kw) statsQb.andWhere('(b.code LIKE :kw OR b.htNo LIKE :kw OR b.goodsName LIKE :kw)', { kw: `%${kw}%` });
+    const statsRow = (await statsQb
+      .select('COUNT(*)', 'total')
+      .addSelect('SUM(CASE WHEN b.status = 1 THEN 1 ELSE 0 END)', 'unprogrammed')
+      .addSelect('SUM(CASE WHEN b.status = 2 THEN 1 ELSE 0 END)', 'inProgress')
+      .addSelect(
+        `SUM(CASE WHEN b.status IN (1,2) AND b.deliveryDate IS NOT NULL AND b.deliveryDate <> '' AND SUBSTRING(b.deliveryDate,1,10) < '${today}' THEN 1 ELSE 0 END)`,
+        'overdue',
+      )
+      .addSelect(
+        `SUM(CASE WHEN b.status IN (1,2) AND b.deliveryDate IS NOT NULL AND b.deliveryDate <> '' AND SUBSTRING(b.deliveryDate,1,10) BETWEEN '${today}' AND '${soonDate}' THEN 1 ELSE 0 END)`,
+        'dueSoon',
+      )
+      .getRawOne()) as any;
+    const stats: BillProgressStats = {
+      unprogrammed: Number(statsRow?.unprogrammed ?? 0),
+      total: Number(statsRow?.total ?? 0),
+      inProgress: Number(statsRow?.inProgress ?? 0),
+      overdue: Number(statsRow?.overdue ?? 0),
+      dueSoon: Number(statsRow?.dueSoon ?? 0),
+    };
+
+    // 3) 工序链 + 组装行
+    const chains = await this.loadChains(bills.map((b) => b.code));
+    const rows = bills.map((b) => {
+      const crafts = this.buildCraftProgress(chains.get(b.code) ?? []);
+      const doneCrafts = crafts.filter((c) => c.status === 3).length;
+      const progressPercent = crafts.length
+        ? Math.round(crafts.reduce((s, c) => s + c.percent, 0) / crafts.length)
+        : 0;
+      const dueInDays = this.daysUntil(b.deliveryDate, today);
+      const active = b.status === 1 || b.status === 2;
+      const overdue = active && dueInDays !== null && dueInDays < 0;
+      const dueSoon = active && dueInDays !== null && dueInDays >= 0 && dueInDays <= BILL_DUE_SOON_DAYS;
+      return {
+        code: b.code,
+        htNo: b.htNo,
+        goodsName: b.goodsName,
+        spec: b.goodsSpec ?? '',
+        num: b.num,
+        unitName: b.unitName,
+        status: b.status,
+        statusName: b.statusName,
+        deliveryDate: b.deliveryDate,
+        overdue,
+        dueSoon,
+        dueInDays,
+        totalCrafts: crafts.length,
+        doneCrafts,
+        progressPercent,
+        crafts,
+      };
+    });
+
+    // 4) 过滤 + 排序 + 分页
+    let list = options.overdueOnly ? rows.filter((r) => r.overdue) : options.dueSoonOnly ? rows.filter((r) => r.dueSoon) : rows;
+    const sortBy = options.sortBy ?? 'delivery';
+    list.sort((a, b) => {
+      if (sortBy === 'progress') {
+        return a.progressPercent - b.progressPercent || this.compareDelivery(a, b);
+      }
+      if (sortBy === 'remaining') {
+        const ra = a.totalCrafts - a.doneCrafts;
+        const rb = b.totalCrafts - b.doneCrafts;
+        return rb - ra || this.compareDelivery(a, b);
+      }
+      // 默认 delivery：逾期 / 临期优先，再按交期从早到晚
+      const pa = a.overdue ? 0 : a.dueSoon ? 1 : 2;
+      const pb = b.overdue ? 0 : b.dueSoon ? 1 : 2;
+      return pa - pb || this.compareDelivery(a, b);
+    });
+    const total = list.length;
+    return { list: list.slice((pageNum - 1) * size, pageNum * size), total, stats, page: pageNum, pageSize: size };
+  }
+
+  /**
+   * 管理员数据大屏：完工预测（进行中加工单的近 7 天报工历史 + 按工序件次估算完成日期）。
+   * - 数据取自本地缓存：bill_cache(status=2) + task_cache(工序链) + report_cache（报工时间按公版回填）
+   * - 件次口径：每道工序都要把整单数量做一遍，总件次 = Σ 各工序计划数；剩余件次 = Σ(计划数-已完成数)
+   * - 预计完成：整单口径 ceil(剩余件次/整单日均件次) 与 各未完成工序的瓶颈口径 ceil(剩余/该工序日均) 取大
+   *   （工序为顺序加工，完工时间由最慢工序决定；逐工序估算可暴露瓶颈）
+   * - 排序：可估算的单按预计完成日期从近到远，无报工数据的排最后
+   */
+  async getBillForecast(
+    options: { keyword?: string; page?: number; pageSize?: number } = {},
+  ): Promise<{ list: BillForecastRow[]; total: number; stats: BillForecastStats; page: number; pageSize: number }> {
+    const pageNum = Math.max(1, Number(options.page) || 1);
+    const size = Math.min(100, Math.max(1, Number(options.pageSize) || 20));
+    const kw = (options.keyword ?? '').trim();
+    const today = fmtToday();
+    const weekStart = this.daysAhead(today, -6);
+
+    // 1) 进行中加工单（status=2）
+    const qb = this.billCache.createQueryBuilder('b').where('b.status = 2');
+    if (kw) qb.andWhere('(b.code LIKE :kw OR b.htNo LIKE :kw OR b.goodsName LIKE :kw)', { kw: `%${kw}%` });
+    const bills = await qb.getMany();
+    const codes = bills.map((b) => b.code);
+    if (!codes.length) {
+      return {
+        list: [],
+        total: 0,
+        stats: { total: 0, withData: 0, weekReported: 0, risk: 0 },
+        page: pageNum,
+        pageSize: size,
+      };
+    }
+
+    // 2) 工序链（kgd_task_cache，按工艺顺序）：每道工序都要把整单数量做一遍
+    const tasks = await this.taskCache.find({
+      where: { billCode: In(codes) },
+      order: { billCode: 'ASC', craftSeq: 'ASC' },
+      select: { billCode: true, craftName: true, craftSeq: true, num: true, validNum: true, status: true, statusName: true },
+    });
+    const craftMap = new Map<string, BillForecastCraftBase[]>();
+    for (const t of tasks) {
+      const arr = craftMap.get(t.billCode) ?? [];
+      arr.push({
+        name: t.craftName,
+        status: t.status,
+        statusName: t.statusName,
+        plan: Number(t.num) || 0,
+        valid: Number(t.validNum) || 0,
+      });
+      craftMap.set(t.billCode, arr);
+    }
+
+    // 3) 全部历史报工累计（按单，工序数据缺失时兜底）
+    const allRows = (await this.reportCache
+      .createQueryBuilder('r')
+      .select('r.bill_code', 'code')
+      .addSelect('SUM(CAST(r.valid_num AS DECIMAL(20,2)))', 'valid')
+      .where('r.bill_code IN (:...codes)', { codes })
+      .groupBy('r.bill_code')
+      .getRawMany()) as Array<{ code: string; valid: string }>;
+    const reportedMap = new Map(allRows.map((r) => [r.code, Number(r.valid) || 0]));
+
+    // 4) 近 7 天每日报工（按单×工序，件次口径）
+    const weekRows = (await this.reportCache
+      .createQueryBuilder('r')
+      .select('r.bill_code', 'code')
+      .addSelect('r.craft_name', 'craftName')
+      .addSelect('SUBSTRING(r.report_time, 1, 10)', 'day')
+      .addSelect('SUM(CAST(r.valid_num AS DECIMAL(20,2)))', 'valid')
+      .where('r.bill_code IN (:...codes)', { codes })
+      .andWhere('r.report_time >= :start', { start: `${weekStart} 00:00:00` })
+      .groupBy('r.bill_code')
+      .addGroupBy('r.craft_name')
+      .addGroupBy('SUBSTRING(r.report_time, 1, 10)')
+      .getRawMany()) as Array<{ code: string; craftName: string; day: string; valid: string }>;
+    const weekMap = new Map<string, Map<string, number>>();
+    // code -> craftName -> day -> valid
+    const craftWeekMap = new Map<string, Map<string, Map<string, number>>>();
+    for (const r of weekRows) {
+      const billDays = weekMap.get(r.code) ?? new Map<string, number>();
+      billDays.set(r.day, (billDays.get(r.day) ?? 0) + (Number(r.valid) || 0));
+      weekMap.set(r.code, billDays);
+      const craftDays = craftWeekMap.get(r.code) ?? new Map<string, Map<string, number>>();
+      const cd = craftDays.get(r.craftName) ?? new Map<string, number>();
+      cd.set(r.day, (cd.get(r.day) ?? 0) + (Number(r.valid) || 0));
+      craftDays.set(r.craftName, cd);
+      craftWeekMap.set(r.code, craftDays);
+    }
+    const daysList: string[] = [];
+    for (let i = 0; i < 7; i++) daysList.push(this.daysAhead(weekStart, i));
+
+    // 5) 组装每单：工序链 + 报工历史 + 预计完成日期（件次口径，瓶颈工序优先）
+    const list: BillForecastRow[] = bills.map((b) => {
+      const num = b.num || 0;
+      const crafts = craftMap.get(b.code) ?? [];
+      // 无工序数据时按单道工序兜底（plan=整单数量）
+      const effCrafts: BillForecastCraftBase[] = crafts.length
+        ? crafts
+        : [{ name: '', status: b.status, statusName: b.statusName, plan: num, valid: reportedMap.get(b.code) ?? 0 }];
+      const craftWeek = craftWeekMap.get(b.code) ?? new Map<string, Map<string, number>>();
+      // 每道工序的周报工 + 日均 + 预估天数（工序间为顺序加工，完工由"最慢的工序"决定）
+      const craftEtas: number[] = [];
+      const craftsDetail: BillForecastCraft[] = effCrafts.map((c) => {
+        const craftDays = craftWeek.get(c.name) ?? new Map<string, number>();
+        const weekValid = Array.from(craftDays.values()).reduce((s, v) => s + v, 0);
+        const weekActive = Array.from(craftDays.values()).filter((v) => v > 0).length;
+        const daily = weekActive ? weekValid / weekActive : 0;
+        const remain = Math.max(0, c.plan - c.valid);
+        let etaDays: number | null = null;
+        if (c.status !== 3 && remain > 0 && daily > 0) {
+          etaDays = Math.ceil(remain / daily);
+          craftEtas.push(etaDays);
+        }
+        return { ...c, weekValid, weekActive, daily: Math.round(daily * 10) / 10, etaDays };
+      });
+      const totalWork = craftsDetail.reduce((s, c) => s + c.plan, 0);
+      const doneWork = craftsDetail.reduce((s, c) => s + c.valid, 0);
+      const reported = doneWork;
+      const remaining = Math.max(0, totalWork - doneWork);
+      const progressPercent = totalWork > 0 ? Math.min(100, Math.round((doneWork / totalWork) * 100)) : 0;
+      const remainingCrafts = craftsDetail.filter((c) => c.status !== 3).length;
+      const doneCrafts = craftsDetail.filter((c) => c.status === 3).length;
+      const weekDays = daysList.map((d) => ({ date: d, valid: weekMap.get(b.code)?.get(d) ?? 0 }));
+      // 每日按工序拆分（仅保留当日有报工的工序），供前端点击日期查看
+      const weekDaysDetail = daysList.map((d) => {
+        const crafts: { name: string; valid: number }[] = [];
+        for (const [cname, cdays] of craftWeek) {
+          const v = cdays.get(d) ?? 0;
+          if (v > 0) crafts.push({ name: cname || '未命名工序', valid: v });
+        }
+        return { date: d, crafts };
+      });
+      const weekTotal = weekDays.reduce((s, d) => s + d.valid, 0);
+      const activeDays = weekDays.filter((d) => d.valid > 0).length;
+      const dailyAvg = activeDays ? Math.round((weekTotal / activeDays) * 10) / 10 : 0;
+      let etaDays: number | null = null;
+      let etaDate: string | null = null;
+      if (dailyAvg > 0) {
+        // 整单口径 + 各工序瓶颈口径取大，避免低估最慢工序的耗时
+        const aggDays = remaining > 0 ? Math.ceil(remaining / dailyAvg) : 0;
+        const craftMax = craftEtas.length ? Math.max(...craftEtas) : 0;
+        etaDays = Math.max(aggDays, craftMax);
+        etaDate = this.daysAhead(today, etaDays);
+      }
+      const deliveryDate = b.deliveryDate ?? null;
+      const overrunDelivery = !!etaDate && !!deliveryDate && etaDate > deliveryDate.slice(0, 10);
+      return {
+        code: b.code,
+        htNo: b.htNo,
+        goodsName: b.goodsName,
+        spec: b.goodsSpec ?? '',
+        num,
+        unitName: b.unitName,
+        status: b.status,
+        statusName: b.statusName,
+        deliveryDate,
+        reported,
+        remaining,
+        progressPercent,
+        weekDays,
+        weekDaysDetail,
+        weekTotal,
+        activeDays,
+        dailyAvg,
+        etaDays,
+        etaDate,
+        overrunDelivery,
+        crafts: craftsDetail,
+        remainingCrafts,
+        doneCrafts,
+      };
+    });
+
+    // 6) 排序 + 统计 + 分页
+    list.sort((a, b) => {
+      if (a.etaDate && b.etaDate) return a.etaDate < b.etaDate ? -1 : a.etaDate > b.etaDate ? 1 : a.code.localeCompare(b.code);
+      if (a.etaDate) return -1;
+      if (b.etaDate) return 1;
+      return a.code.localeCompare(b.code);
+    });
+    const stats: BillForecastStats = {
+      total: list.length,
+      withData: list.filter((b) => b.etaDate).length,
+      weekReported: list.reduce((s, b) => s + b.weekTotal, 0),
+      risk: list.filter((b) => b.overrunDelivery).length,
+    };
+    return { list: list.slice((pageNum - 1) * size, pageNum * size), total: list.length, stats, page: pageNum, pageSize: size };
+  }
+
+  /**
+   * 管理员数据大屏：工序产出趋势（近 N 天各工序每日良品/废品/报工次数）。
+   * - days：统计天数（7~30，默认 7）
+   * - craftNames：工序过滤（空=全部）
+   * - 数据取自 kgd_report_cache.report_time（公版回填时间）；系统报工无工时字段
+   *   （working_minutes 全为 0），故用"报工次数"反映每日工作强度
+   */
+  async getCraftTrend(days = 7, craftNames?: string[]) {
+    const n = Math.min(30, Math.max(7, Number(days) || 7));
+    const today = fmtToday();
+    const start = this.daysAhead(today, -(n - 1));
+    const qb = this.reportCache
+      .createQueryBuilder('r')
+      .select('r.craft_name', 'craftName')
+      .addSelect('SUBSTRING(r.report_time, 1, 10)', 'day')
+      .addSelect('SUM(CAST(r.valid_num AS DECIMAL(20,2)))', 'valid')
+      .addSelect('SUM(CAST(r.waste_num AS DECIMAL(20,2)))', 'waste')
+      .addSelect('COUNT(*)', 'cnt')
+      .where("r.report_time <> '' AND r.report_time >= :start AND r.report_time < :end", {
+        start: `${start} 00:00:00`,
+        end: `${this.daysAhead(today, 1)} 00:00:00`,
+      })
+      .groupBy('r.craft_name')
+      .addGroupBy('SUBSTRING(r.report_time, 1, 10)');
+    if (craftNames?.length) qb.andWhere('r.craft_name IN (:...names)', { names: craftNames });
+    const rows = (await qb.getRawMany()) as Array<{
+      craftName: string;
+      day: string;
+      valid: string;
+      waste: string;
+      cnt: string;
+    }>;
+
+    // 按 工序+日期 聚合为连续 N 天序列
+    const daysList: string[] = [];
+    for (let i = 0; i < n; i++) daysList.push(this.daysAhead(start, i));
+    const byCraft = new Map<string, Map<string, CraftTrendPoint>>();
+    for (const r of rows) {
+      const name = r.craftName || '未知工序';
+      if (!byCraft.has(name)) byCraft.set(name, new Map());
+      byCraft.get(name)!.set(r.day, {
+        date: r.day,
+        valid: Number(r.valid) || 0,
+        waste: Number(r.waste) || 0,
+        cnt: Number(r.cnt) || 0,
+      });
+    }
+
+    const crafts: CraftTrendItem[] = [...byCraft.entries()].map(([name, m]) => {
+      let valid = 0;
+      let waste = 0;
+      let cnt = 0;
+      const points: CraftTrendPoint[] = daysList.map((d) => {
+        const p = m.get(d) ?? { date: d, valid: 0, waste: 0, cnt: 0 };
+        valid += p.valid;
+        waste += p.waste;
+        cnt += p.cnt;
+        return p;
+      });
+      const total = valid + waste;
+      return {
+        name,
+        points,
+        totals: {
+          valid,
+          waste,
+          cnt,
+          passRate: total > 0 ? Math.round((valid / total) * 1000) / 10 : 100,
+        },
+      };
+    });
+    crafts.sort((a, b) => b.totals.valid - a.totals.valid);
+
+    return { days: n, startDate: start, endDate: today, daysList, crafts, generatedAt: new Date().toISOString() };
+  }
+
+  /** 交期从早到晚比较（无交期排最后） */
+  private compareDelivery(a: BillProgressRow, b: BillProgressRow): number {
+    const da = a.deliveryDate || '9999-99-99';
+    const db = b.deliveryDate || '9999-99-99';
+    return da < db ? -1 : da > db ? 1 : a.code.localeCompare(b.code);
+  }
+
+  /** 'YYYY-MM-DD' 相对 today 的天数：负数=已过期，null=无法解析 */
+  private daysUntil(delivery: string | null | undefined, today: string): number | null {
+    const d = (delivery ?? '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+    return Math.round((Date.parse(d) - Date.parse(today)) / 86400000);
+  }
+
+  /** 'YYYY-MM-DD' 向后推 n 天 */
+  private daysAhead(date: string, days: number): string {
+    const d = new Date(`${date}T00:00:00`);
+    d.setDate(d.getDate() + days);
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
 }

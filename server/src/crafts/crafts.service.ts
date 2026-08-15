@@ -48,4 +48,21 @@ export class CraftsService {
     const all = await this.getAll();
     return all.filter((c) => c.reportableUsers.some((u) => u.id === user.kgdUserId));
   }
+
+  /** 不良品项字典缓存（5 分钟，避免每次报工弹窗都拉公版接口） */
+  private wasteCache: { data: { code: string; name: string }[]; at: number } | null = null;
+  private readonly WASTE_CACHE_MS = 5 * 60 * 1000;
+
+  /** 不良品项字典（code 编号 / name 名称），供报工选择不良品项映射编号提交 */
+  async getWasteItems(): Promise<{ code: string; name: string }[]> {
+    if (this.wasteCache && Date.now() - this.wasteCache.at < this.WASTE_CACHE_MS) {
+      return this.wasteCache.data;
+    }
+    const { data } = await this.kgdClient.listWebWasteItems();
+    const items = (data ?? [])
+      .filter((w: any) => w?.code != null && w?.name != null)
+      .map((w: any) => ({ code: String(w.code), name: String(w.name) }));
+    this.wasteCache = { data: items, at: Date.now() };
+    return items;
+  }
 }

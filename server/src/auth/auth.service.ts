@@ -19,6 +19,8 @@ export interface JwtPayload {
 
 /** 快工单岗位名 → 本地系统管理员：岗位为「系统管理员」自动获得管理员权限（按岗位自动分配） */
 const ADMIN_ROLE_NAMES = ['系统管理员'];
+/** 快工单岗位名 → 本地车间主管：岗位为「生产主管/车间主管」可查看数据大屏（不可管理用户权限） */
+const MANAGER_ROLE_NAMES = ['生产主管', '车间主管'];
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -99,9 +101,10 @@ export class AuthService implements OnModuleInit {
     return { created, removed, total: locals.length };
   }
 
-  /** 快工单岗位 → 本地系统角色：岗位为「系统管理员」自动分配管理员权限；快工单管理员账号兜底保持 admin */
+  /** 快工单岗位 → 本地系统角色：系统管理员→admin；车间主管→manager；快工单管理员账号兜底保持 admin */
   private roleFor(u: { name?: string }, roleName: string): string {
     if (ADMIN_ROLE_NAMES.includes(roleName)) return 'admin';
+    if (MANAGER_ROLE_NAMES.includes(roleName)) return 'manager';
     return u.name === this.config.get<string>('kgd.username') ? 'admin' : 'worker';
   }
 

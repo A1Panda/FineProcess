@@ -524,12 +524,25 @@ export class KgdSyncService implements OnModuleInit {
     }
     if (reportWindowDays > 0) {
       const from = minusDays(now, reportWindowDays);
-      await this.incrementalSyncReportRecords(now, from, true);
+      const pulled = await this.incrementalSyncReportRecords(now, from, true);
       this.logger.log(`报工记录同步完成(近${reportWindowDays}天)：窗口 [${minusSeconds(from, REPORT_OVERLAP_SEC)}, ${now}]，耗时 ${Date.now() - start}ms`);
+      if (pulled > 0) await this.syncWebReportTimesSafe(minusSeconds(from, REPORT_OVERLAP_SEC));
       return;
     }
-    await this.incrementalSyncReportRecords(now, lastSync!);
+    const pulled = await this.incrementalSyncReportRecords(now, lastSync!);
     this.logger.log(`报工记录同步完成(增量)：窗口 [${minusSeconds(lastSync!, REPORT_OVERLAP_SEC)}, ${now}]，耗时 ${Date.now() - start}ms`);
+    // 增量拉到新记录后，立即从公版回填新记录的报工时间（只拉与增量一致的近期窗口，轻量）
+    if (pulled > 0) await this.syncWebReportTimesSafe(minusSeconds(lastSync!, REPORT_OVERLAP_SEC));
+  }
+
+  /** 增量同步后回填公版报工时间：只拉与增量窗口一致的近期数据，失败不影响本次同步。
+   *  公版 Web 端上报带完整 report_time，OpenAPI 同步记录无时间戳，在此按 report_id 补齐 */
+  private async syncWebReportTimesSafe(from: string): Promise<void> {
+    try {
+      await this.syncWebReportTimes(from);
+    } catch (e) {
+      this.logger.warn(`公版报工时间回填失败（不影响本次同步）: ${(e as Error).message}`);
+    }
   }
 
   /**
@@ -560,16 +573,25 @@ export class KgdSyncService implements OnModuleInit {
   /**
    * 从公版 Web 系统回填报工时间：OpenAPI 报工接口返回的记录不含时间戳字段，
    * 本地缓存中纯同步记录（report_time 为空）在此按 report_id 精确匹配，回填公版 report_time。
-   * 只回填空值，不覆盖本地报工时间；窗口与全量对账一致（近一年）。可手动触发（POST /tasks/sync-web-report-times）。
+   * 只回填空值，不覆盖本地报工时间。可手动触发（POST /tasks/sync-web-report-times）。
+   * @param from 拉取窗口起点；不传则与全量对账一致（近一年）
    */
-  async syncWebReportTimes(): Promise<{ updated: number; total: number }> {
+  async syncWebReportTimes(from?: string): Promise<{ updated: number; total: number }> {
     const start = Date.now();
+    // 没有待回填的报工时间则直接跳过（本地报工都带本地时间；避免每次全量多花约 20s 拉公版）
+    const emptyCount = await this.reportCache.count({
+      where: [{ reportTime: '' }, { reportTime: IsNull() }],
+    });
+    if (emptyCount === 0) {
+      this.logger.log('公版报工时间回填跳过：无空 report_time 记录');
+      return { updated: 0, total: 0 };
+    }
     const now = fmtDateTime(new Date());
-    const from = minusDays(now, FULL_SYNC_WINDOW_DAYS);
+    const fromDate = from ?? minusDays(now, FULL_SYNC_WINDOW_DAYS);
     const rows: any[] = [];
     let page = 1;
     for (;;) {
-      const { data, count } = await this.kgdClient.listWebReportRecords({ pageNo: page, report_time_start: from });
+      const { data, count } = await this.kgdClient.listWebReportRecords({ pageNo: page, report_time_start: fromDate });
       rows.push(...(data ?? []));
       if ((data?.length ?? 0) < WEB_PAGE_SIZE || page * WEB_PAGE_SIZE >= (count ?? rows.length)) break;
       page++;
@@ -618,7 +640,7 @@ export class KgdSyncService implements OnModuleInit {
    *  - 远程已删除的同步记录统一由全量对账（每日 / 长按刷新）兜底清理。
    *  - 窗口路径只清理「本地报工时间落在本次拉取窗口内、却未被窗口拉到」的记录，
    *    此时该记录必定已在远程被删除（若远程仍在，窗口拉取必然返回它）。 */
-  private async incrementalSyncReportRecords(now: string, from: string, cleanupWindow = false) {
+  private async incrementalSyncReportRecords(now: string, from: string, cleanupWindow = false): Promise<number> {
     const fetchFrom = minusSeconds(from, REPORT_OVERLAP_SEC);
     const { all, total } = await this.fetchReportRecords({
       report_time_start: fetchFrom,
@@ -643,6 +665,7 @@ export class KgdSyncService implements OnModuleInit {
       }
     }
     await this.syncMeta.upsert({ key: 'report_last_sync', value: now }, ['key']);
+    return all.length;
   }
 
   /** 分页拉取报工记录（params 为空即全量） */
@@ -700,6 +723,14 @@ export class KgdSyncService implements OnModuleInit {
       validMoney: String(r.valid_money ?? '0'),
       priceModeName: r.price_mode_name ?? '',
       remark: r.remark ?? null,
+      // 不良品项明细（快工单 report_waste_list：[{waste_item:{code,name},num}]）
+      wasteList: Array.isArray(r.report_waste_list) && r.report_waste_list.length
+        ? JSON.stringify(r.report_waste_list.map((w: any) => ({
+            code: String(w.waste_item?.code ?? ''),
+            name: String(w.waste_item?.name ?? ''),
+            num: Number(w.num) || 0,
+          })))
+        : null,
       syncedAt: new Date(),
     }));
     await this.reportCache.upsert(rows, ['reportId']);

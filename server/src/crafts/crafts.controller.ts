@@ -20,4 +20,10 @@ export class CraftsController {
   getAll() {
     return this.crafts.getAll();
   }
+
+  /** 不良品项字典（code 编号 / name 名称） */
+  @Get('waste-items')
+  getWasteItems() {
+    return this.crafts.getWasteItems();
+  }
 }

@@ -102,4 +102,61 @@ export class TasksController {
   getInProgressBills() {
     return this.tasks.getInProgressBills();
   }
+
+  /** 管理员数据大屏：完工预测（进行中加工单近 7 天报工历史 + 按日均产量估算完成日期）。
+   *  参数：keyword（单号/HT图号/产品名）、page/pageSize */
+  @Get('bill-forecast')
+  getBillForecast(
+    @Query('keyword') keyword?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.tasks.getBillForecast({
+      keyword,
+      page: page !== undefined ? Number(page) : 1,
+      pageSize: pageSize !== undefined ? Number(pageSize) : 20,
+    });
+  }
+
+  /** 管理员数据大屏：工序产出趋势（近 N 天各工序每日良品/废品/报工次数）。
+   *  参数：days（7~30，默认 7）、crafts（工序过滤，逗号分隔，缺省=全部） */
+  @Get('craft-trend')
+  getCraftTrend(@Query('days') days?: string, @Query('crafts') crafts?: string) {
+    return this.tasks.getCraftTrend(
+      days !== undefined ? Number(days) : 7,
+      crafts ? crafts.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+    );
+  }
+
+  /** 管理员数据大屏：加工单进度列表（全量 + 每单工序进度 + 逾期/临期标记）。
+   *  参数：status 多值（逗号分隔）、keyword、sortBy（delivery/progress/remaining）、overdue、dueSoon、
+   *        scope（done-today=今日已完成）、page/pageSize */
+  @Get('bill-progress')
+  getBillProgress(
+    @Query('status') status?: string,
+    @Query('keyword') keyword?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('overdue') overdue?: string,
+    @Query('dueSoon') dueSoon?: string,
+    @Query('scope') scope?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.tasks.getBillProgress({
+      status:
+        status !== undefined
+          ? status
+              .split(',')
+              .map((s) => Number(s.trim()))
+              .filter((n) => Number.isInteger(n) && n > 0)
+          : undefined,
+      keyword,
+      sortBy,
+      overdueOnly: overdue === 'true',
+      dueSoonOnly: dueSoon === 'true',
+      scope: scope === 'done-today' ? scope : undefined,
+      page: page !== undefined ? Number(page) : 1,
+      pageSize: pageSize !== undefined ? Number(pageSize) : 20,
+    });
+  }
 }

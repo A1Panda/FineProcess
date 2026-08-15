@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { ReportService } from './report.service';
 import type { EditReportWorkDto, ReportWorkDto } from './report.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -26,6 +26,16 @@ export class ReportController {
   @Put(':id')
   editReport(@CurrentUser() user: JwtPayload, @Param('id') id: string, @Body() dto: EditReportWorkDto) {
     return this.reportService.editReport(user, { ...dto, id: Number(id) });
+  }
+
+  /** 删除报工记录（仅限删除自己的报工） */
+  @Delete(':id')
+  deleteReport(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Query('billCode') billCode: string,
+  ) {
+    return this.reportService.deleteReport(user, Number(id), billCode);
   }
 
   /** 按加工单编号查报工记录 */

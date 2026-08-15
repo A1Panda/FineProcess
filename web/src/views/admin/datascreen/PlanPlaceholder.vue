@@ -3,40 +3,37 @@
     <!-- 规划说明卡片 -->
     <div class="glass-card">
       <div class="hero-icon">
-        <el-icon :size="30"><DataAnalysis /></el-icon>
+        <el-icon :size="30"><component :is="icon" /></el-icon>
       </div>
       <span class="pill">规划中</span>
-      <h2 class="card-title">数据大屏</h2>
-      <p class="card-desc">车间生产数据可视化看板，建设中，敬请期待</p>
+      <h2 class="card-title">{{ title }}</h2>
+      <p class="card-desc">{{ desc }}</p>
     </div>
 
     <!-- 预告能力 -->
     <div class="preview-panel">
       <div class="list-head">上线后你将看到</div>
-      <div class="preview-cell">
-        <div class="pv-ico"><el-icon :size="16"><Document /></el-icon></div>
+      <div v-for="f in features" :key="f.title" class="preview-cell">
+        <div class="pv-ico"><el-icon :size="16"><component :is="f.icon" /></el-icon></div>
         <div class="pv-main">
-          <div class="pv-title">报工统计</div>
-          <div class="pv-desc">按工序/日期汇总良品与废品数量</div>
-        </div>
-      </div>
-      <div class="preview-cell">
-        <div class="pv-ico"><el-icon :size="16"><List /></el-icon></div>
-        <div class="pv-main">
-          <div class="pv-title">加工单进度</div>
-          <div class="pv-desc">每张加工单各工序完成进度一览</div>
-        </div>
-      </div>
-      <div class="preview-cell">
-        <div class="pv-ico"><el-icon :size="16"><TrendCharts /></el-icon></div>
-        <div class="pv-main">
-          <div class="pv-title">工序产出趋势</div>
-          <div class="pv-desc">实时更新的产量与工时趋势图</div>
+          <div class="pv-title">{{ f.title }}</div>
+          <div class="pv-desc">{{ f.desc }}</div>
         </div>
       </div>
     </div>
   </section>
 </template>
+
+<script setup>
+defineProps({
+  /** 模块图标（element-plus 图标名，已在 main.js 全局注册） */
+  icon: { type: String, default: 'DataAnalysis' },
+  title: { type: String, required: true },
+  desc: { type: String, default: '' },
+  /** 预告能力列表 [{ icon, title, desc }] */
+  features: { type: Array, default: () => [] },
+})
+</script>
 
 <style scoped>
 .data-page {

@@ -34,9 +34,9 @@
                   <el-icon :size="14"><component :is="isAdmin ? 'Lock' : 'User'" /></el-icon>
                   <span>{{ permissionText }}</span>
                 </div>
-                <!-- 管理员专属：管理员界面入口（仅 admin 可见） -->
-                <el-dropdown-item v-if="isAdmin" command="admin">
-                  <el-icon :size="14"><Setting /></el-icon>管理员界面
+                <!-- 管理员专属：管理员界面/数据大屏入口（admin + 车间主管可见） -->
+                <el-dropdown-item v-if="canAdmin" command="admin">
+                  <el-icon :size="14"><Setting /></el-icon>{{ auth.user?.role === 'manager' ? '数据大屏' : '管理员界面' }}
                 </el-dropdown-item>
                 <el-dropdown-item command="profile">
                   <el-icon :size="14"><User /></el-icon>个人中心
@@ -222,15 +222,23 @@ function onToggleTheme(e) {
 }
 
 const isAdmin = computed(() => auth.user?.role === 'admin')
+/** 可进入管理员界面/数据大屏：系统管理员 + 车间主管 */
+const canAdmin = computed(() => ['admin', 'manager'].includes(auth.user?.role))
 
 /** 岗位名：优先显示快工单岗位（如 生产班长），无则按系统角色兜底 */
 const roleNameText = computed(
-  () => auth.user?.roleName || (auth.user?.role === 'admin' ? '管理员' : '工人'),
+  () =>
+    auth.user?.roleName ||
+    (auth.user?.role === 'admin' ? '管理员' : auth.user?.role === 'manager' ? '车间主管' : '工人'),
 )
 
 /** 当前权限说明（随系统角色变化） */
 const permissionText = computed(() =>
-  auth.user?.role === 'admin' ? '管理员：可查看全部任务与工序' : '工人：工作台仅查看本人任务',
+  auth.user?.role === 'admin'
+    ? '管理员：可查看全部任务与工序'
+    : auth.user?.role === 'manager'
+      ? '车间主管：可查看数据大屏'
+      : '工人：工作台仅查看本人任务',
 )
 
 const greeting = computed(() => {
@@ -453,8 +461,8 @@ function shortDate(v) {
 }
 
 onMounted(() => {
-  // 系统管理员且未被分配任何工序：默认进入管理员界面（而非空工作台）
-  if (auth.user?.role === 'admin' && auth.user?.hasCraft === false) {
+  // 管理员/车间主管且未被分配任何工序：默认进入管理员界面（而非空工作台）
+  if (['admin', 'manager'].includes(auth.user?.role) && auth.user?.hasCraft === false) {
     router.replace('/admin')
     return
   }

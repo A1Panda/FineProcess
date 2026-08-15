@@ -129,8 +129,8 @@ async function submit(auto = false) {
       localStorage.removeItem(SAVED_KEY)
     }
     if (!auto) ElMessage.success('登录成功')
-    // 系统管理员且未被分配任何工序：默认打开管理员界面（而非空工作台）
-    if (auth.user?.role === 'admin' && auth.user?.hasCraft === false) {
+    // 管理员/车间主管且未被分配任何工序：默认打开管理员界面（而非空工作台）
+    if (['admin', 'manager'].includes(auth.user?.role) && auth.user?.hasCraft === false) {
       router.replace('/admin')
     } else {
       router.push('/')

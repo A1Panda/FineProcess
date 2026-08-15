@@ -31,10 +31,14 @@
         <div class="row-top">
           <span class="seq">{{ records.length - i }}</span>
           <span class="craft-name">{{ r.craftName }}</span>
-          <button v-if="canEdit(r)" class="edit-btn" @click="startEdit(r)">
-            <el-icon :size="12"><EditPen /></el-icon>
-            修改
-          </button>
+          <div v-if="canEdit(r)" class="row-actions">
+            <button class="edit-btn" aria-label="修改" @click="startEdit(r)">
+              <el-icon :size="14"><EditPen /></el-icon>
+            </button>
+            <button class="del-btn" aria-label="删除" @click="removeReport(r)">
+              <el-icon :size="14"><Delete /></el-icon>
+            </button>
+          </div>
         </div>
 
         <!-- 副信息行：报工时间 + 报工人 -->
@@ -49,13 +53,38 @@
             <span class="stat-key">良品</span>
             <span class="stat-val good">{{ r.validNum }}<span class="unit">{{ r.unitName }}</span></span>
           </div>
-          <div class="stat">
+          <div
+            class="stat stat-waste"
+            :class="{ clickable: wasteDetail(r).length > 0, expanded: expandedId === r.id }"
+            @click="toggleWaste(r)"
+          >
             <span class="stat-key">不良品</span>
             <span class="stat-val bad">{{ r.wasteNum }}<span class="unit">{{ r.unitName }}</span></span>
+            <svg
+              v-if="wasteDetail(r).length"
+              class="waste-arrow"
+              :class="{ open: expandedId === r.id }"
+              viewBox="0 0 16 16"
+              width="10"
+              height="10"
+            >
+              <path d="M3 5.5 8 10.5 13 5.5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
           </div>
           <div v-if="Number(r.workingMinutes) > 0" class="stat">
             <span class="stat-key">工时</span>
             <span class="stat-val work">{{ r.workingMinutes }}<span class="unit">分</span></span>
+          </div>
+        </div>
+
+        <!-- 不良品项明细：点击"不良品"展开 -->
+        <div v-if="expandedId === r.id && wasteDetail(r).length" class="waste-detail">
+          <span class="waste-title">不良品原因</span>
+          <div class="waste-chips">
+            <span v-for="w in wasteDetail(r)" :key="w.code || w.name" class="waste-chip">
+              <span class="wc-name">{{ wasteName(w) }}</span>
+              <span class="wc-num">×{{ w.num }}</span>
+            </span>
           </div>
         </div>
 
@@ -81,6 +110,14 @@
               <el-input-number v-model="editForm.workingMinutes" :min="0" :controls="false" size="small" />
             </label>
           </div>
+          <!-- 不良品项数量：修改现有明细的数量，0 表示移除该项 -->
+          <div v-if="editWasteItems.length" class="edit-waste">
+            <span class="edit-waste-title">不良品项数量（0 = 移除）</span>
+            <div v-for="w in editWasteItems" :key="w.code" class="edit-waste-row">
+              <span class="ew-name">{{ wasteName(w) }}</span>
+              <el-input-number v-model="w.num" :min="0" :controls="false" size="small" style="width: 100px" />
+            </div>
+          </div>
           <el-input v-model="editForm.remark" size="small" placeholder="备注（可选）" clearable />
           <div class="edit-actions">
             <el-button round size="small" @click="editingId = null">取消</el-button>
@@ -94,8 +131,8 @@
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import { EditPen } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete, EditPen } from '@element-plus/icons-vue'
 import api from '../api'
 import { useAuthStore } from '../stores/auth'
 
@@ -114,6 +151,13 @@ const loading = ref(false)
 const editingId = ref(null)
 const saving = ref(false)
 const editForm = reactive({ validNum: 0, wasteNum: 0, workingMinutes: 0, remark: '' })
+/** 编辑中的不良品项明细（[{code,name,num}]，num 可改，0 = 移除） */
+const editWasteItems = ref([])
+
+/** 当前展开不良品项明细的记录 id */
+const expandedId = ref(null)
+/** 不良品项字典（code → name），本地报工未同步时 name 为空，用字典反查 */
+const wasteDict = ref([])
 
 async function loadRecords() {
   records.value = []
@@ -128,16 +172,83 @@ async function loadRecords() {
   }
 }
 
+async function loadWasteDict() {
+  try {
+    wasteDict.value = (await api.get('/crafts/waste-items')) ?? []
+  } catch {
+    wasteDict.value = []
+  }
+}
+
+/** 记录的不良品项明细（可能为空数组） */
+function wasteDetail(r) {
+  return Array.isArray(r.wasteItems) ? r.wasteItems : []
+}
+
+/** 不良品项显示名：优先记录自带 name（同步数据），否则用字典 code→name 映射 */
+function wasteName(w) {
+  if (w.name) return w.name
+  const hit = wasteDict.value.find((d) => d.code === w.code)
+  return hit ? hit.name : w.code || '未知'
+}
+
+/** 点击"不良品"：有明细时切换展开 */
+function toggleWaste(r) {
+  if (!wasteDetail(r).length) return
+  expandedId.value = expandedId.value === r.id ? null : r.id
+}
+
+// 编辑明细数量时自动同步不良品总数（保持与明细合计一致）
+watch(
+  editWasteItems,
+  (items) => {
+    editForm.wasteNum = items.reduce((s, w) => s + (Number(w.num) || 0), 0)
+  },
+  { deep: true },
+)
+
 watch(visible, (v) => {
   if (v && props.task?.produceBillCode) {
     editingId.value = null
+    expandedId.value = null
     loadRecords()
+    loadWasteDict()
   }
 })
 
-/** 只能修改自己的报工 */
+/** 能否操作（修改/删除）：优先按创建者（代报时创建者=操作人），否则按报工人（历史/同步记录） */
 function canEdit(r) {
-  return r.reportUserId && currentUserId.value && String(r.reportUserId) === String(currentUserId.value)
+  if (!currentUserId.value) return false
+  const owner = r.creatorId ? String(r.creatorId) : String(r.reportUserId)
+  return !!owner && owner === String(currentUserId.value)
+}
+
+/** 删除报工记录（仅自己的）：二次确认后调用后端，后端透传快工单删除 */
+async function removeReport(r) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除这条【${r.craftName}】报工记录吗？删除后不可恢复。`,
+      '删除报工',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
+      },
+    )
+  } catch {
+    return
+  }
+  try {
+    await api.delete(`/report/${r.id}?billCode=${encodeURIComponent(props.task.produceBillCode)}`)
+    ElMessage.success('报工记录已删除')
+    editingId.value = null
+    await loadRecords()
+    // 通知任务卡刷新良品/不良数（服务端已重算缓存）
+    emit('changed')
+  } catch {
+    /* 拦截器已提示 */
+  }
 }
 
 function startEdit(r) {
@@ -146,18 +257,25 @@ function startEdit(r) {
   editForm.wasteNum = Number(r.wasteNum) || 0
   editForm.workingMinutes = Number(r.workingMinutes) || 0
   editForm.remark = r.remark || ''
+  // 拷贝现有不良品项明细供编辑（不改原记录对象）
+  editWasteItems.value = wasteDetail(r).map((w) => ({ code: w.code, name: w.name || '', num: Number(w.num) || 0 }))
 }
 
 async function saveEdit() {
   if (!editingId.value) return
   saving.value = true
   try {
+    // 不良品项：数量>0 的项提交（整组覆盖，[] = 清空）；无明细记录保持 undefined 不触碰
+    const wasteItems = editWasteItems.value.length
+      ? editWasteItems.value.filter((w) => Number(w.num) > 0).map((w) => ({ wasteItemCode: w.code, num: Number(w.num) }))
+      : undefined
     await api.put(`/report/${editingId.value}`, {
       billCode: props.task.produceBillCode,
       validNum: Number(editForm.validNum) || 0,
       wasteNum: Number(editForm.wasteNum) || 0,
       workingMinutes: Number(editForm.workingMinutes) || 0,
       remark: editForm.remark?.trim() || '',
+      wasteItems,
     })
     ElMessage.success('报工记录已修改')
     editingId.value = null
@@ -210,14 +328,13 @@ async function saveEdit() {
 }
 
 .bill-goods {
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 14.5px;
+  font-weight: 600;
   color: var(--foreground);
-  line-height: 1.45;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  line-height: 1.35;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   word-break: break-all;
 }
 
@@ -266,7 +383,6 @@ async function saveEdit() {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 14px;
-  box-shadow: var(--shadow-sm);
 }
 
 .row-top {
@@ -300,24 +416,43 @@ async function saveEdit() {
   white-space: nowrap;
 }
 
-.edit-btn {
+.row-actions {
   margin-left: auto;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 3px;
-  font-size: 12px;
-  color: var(--primary);
-  background: rgba(0, 122, 255, 0.1);
-  border: none;
-  border-radius: 999px;
-  padding: 4px 10px;
-  cursor: pointer;
-  transition: opacity 0.15s;
+  gap: 6px;
   flex-shrink: 0;
 }
 
-.edit-btn:active {
-  opacity: 0.7;
+.edit-btn,
+.del-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: transform 0.12s ease, opacity 0.15s ease, background 0.15s ease;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.edit-btn {
+  color: var(--primary);
+  background: rgba(0, 122, 255, 0.1);
+}
+
+.del-btn {
+  color: var(--destructive);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.edit-btn:active,
+.del-btn:active {
+  transform: scale(0.9);
+  opacity: 0.75;
 }
 
 /* ===== 副信息行：时间 + 报工人 ===== */
@@ -326,14 +461,14 @@ async function saveEdit() {
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 10px;
-  margin-top: 6px;
+  margin-top: 5px;
 }
 
 .report-time {
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
-  opacity: 0.85;
+  opacity: 0.9;
   letter-spacing: 0.01em;
 }
 
@@ -345,7 +480,9 @@ async function saveEdit() {
 
 .user {
   font-size: 12px;
-  color: var(--muted-foreground);
+  font-weight: 500;
+  color: var(--foreground);
+  opacity: 0.85;
 }
 
 /* ===== 三列统计 ===== */
@@ -355,7 +492,7 @@ async function saveEdit() {
   margin-top: 10px;
   background: var(--muted);
   border-radius: 12px;
-  padding: 10px 0;
+  padding: 9px 0;
 }
 
 .stat {
@@ -377,10 +514,11 @@ async function saveEdit() {
 }
 
 .stat-val {
-  font-size: 17px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
+  letter-spacing: -0.01em;
 }
 
 .stat-val .unit {
@@ -396,6 +534,90 @@ async function saveEdit() {
 
 .stat-val.bad {
   color: var(--destructive);
+}
+
+/* 不良品统计：有明细时可点击展开 */
+.stat-waste {
+  position: relative;
+  cursor: default;
+}
+
+.stat-waste.clickable {
+  cursor: pointer;
+}
+
+.stat-waste.clickable .stat-key {
+  color: var(--destructive);
+}
+
+.waste-arrow {
+  position: absolute;
+  top: 3px;
+  right: 10px;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+  transition: transform 0.2s ease, opacity 0.15s ease;
+  pointer-events: none;
+}
+
+.stat-waste.clickable .waste-arrow {
+  color: var(--destructive);
+  opacity: 1;
+}
+
+.waste-arrow.open {
+  transform: rotate(180deg);
+}
+
+.stat-waste.clickable:active {
+  opacity: 0.6;
+}
+
+/* ===== 不良品项明细（点击展开） ===== */
+.waste-detail {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid rgba(239, 68, 68, 0.18);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.waste-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--destructive);
+  letter-spacing: 0.02em;
+}
+
+.waste-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.waste-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+}
+
+.wc-name {
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.wc-num {
+  color: var(--destructive);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-val.work {
@@ -466,6 +688,48 @@ async function saveEdit() {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+/* ===== 编辑区不良品项数量 ===== */
+.edit-waste {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.edit-waste-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  letter-spacing: 0.02em;
+}
+
+.edit-waste-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ew-name {
+  font-size: 13px;
+  color: var(--foreground);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edit-waste-row :deep(.el-input-number) {
+  flex-shrink: 0;
+}
+
+.edit-waste-row :deep(.el-input__wrapper) {
+  border-radius: 8px;
 }
 
 .edit-actions .el-button {

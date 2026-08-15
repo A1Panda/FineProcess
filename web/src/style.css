@@ -134,6 +134,47 @@ body,
   font-weight: 500;
 }
 
+/* ===== 分页：胶囊圆角，与主页面按钮风格统一 ===== */
+.el-pagination.is-background .btn-prev,
+.el-pagination.is-background .btn-next,
+.el-pagination.is-background .el-pager li {
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-weight: 500;
+  min-width: 30px;
+  height: 30px;
+  line-height: 28px;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.el-pagination.is-background .el-pager li:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.el-pagination.is-background .el-pager li.is-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.el-pagination.is-background .btn-prev:hover,
+.el-pagination.is-background .btn-next:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.el-pagination.is-background .btn-prev.is-disabled,
+.el-pagination.is-background .btn-next.is-disabled {
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--muted-foreground);
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .el-button--large {
   border-radius: 999px;
   height: 48px;

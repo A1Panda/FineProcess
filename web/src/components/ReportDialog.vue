@@ -13,25 +13,19 @@
       </div>
     </template>
 
-    <!-- 商品信息卡：单号 + 商品名 + 计划/已报统计 -->
+    <!-- 商品信息卡：商品名 + 单号 + 进度 -->
     <div v-if="task" class="bill-card">
-      <div class="bill-code">
-        <el-icon :size="13"><CopyDocument /></el-icon>
-        <span class="code">{{ task.produceBillCode }}</span>
+      <div class="bill-head">
+        <div class="bill-goods" :title="task.goodsName">{{ task.goodsName }}</div>
+        <span class="bill-code">{{ task.produceBillCode }}</span>
       </div>
-      <div class="bill-goods" :title="task.goodsName">{{ task.goodsName }}</div>
       <div class="bill-stats">
-        <div class="bs-main">
-          <div class="bs-left">
-            <span class="bs-label">已报良品</span>
-            <span class="bs-num good">{{ task.validNum }}<span class="bs-total">/ {{ task.num }} {{ task.unitName }}</span></span>
-          </div>
-          <div class="bs-right">
-            <span class="bs-label">剩余待加工</span>
-            <span class="bs-num remain">{{ remaining }}</span>
-          </div>
-        </div>
+        <span class="bs-good">
+          已报良品 <b class="bs-num good">{{ task.validNum }}</b>
+          <span class="bs-total">/ {{ task.num }} {{ task.unitName }}</span>
+        </span>
         <div class="bs-bar"><div class="bs-fill" :style="{ width: donePct + '%' }"></div></div>
+        <span class="bs-remain">剩 <b class="bs-num remain">{{ remaining }}</b></span>
       </div>
     </div>
 
@@ -51,10 +45,63 @@
         <el-form-item label="良品数" required class="field-half">
           <el-input-number v-model="form.validNum" :min="0" :precision="0" :controls="false" style="width: 100%" />
         </el-form-item>
-        <el-form-item label="不良品数" class="field-half">
+        <!-- 未配置不良品项的工序：直接输入不良品数 -->
+        <el-form-item v-if="!wasteItemNames.length" label="不良品数" class="field-half">
           <el-input-number v-model="form.wasteNum" :min="0" :precision="0" :controls="false" style="width: 100%" />
         </el-form-item>
+        <!-- 已配置不良品项：数量由明细自动汇总（只读展示） -->
+        <el-form-item v-else label="不良品数" class="field-half">
+          <div class="waste-total" :class="{ none: wasteTotal === 0 }">
+            {{ wasteTotal }} <span class="waste-total-hint">由明细汇总</span>
+          </div>
+        </el-form-item>
       </div>
+      <!-- 不良品项（选填）：用户主动勾选要填报的项，避免一长串输入框 -->
+      <el-form-item v-if="wasteItemNames.length" label="不良品项（选填）">
+        <div class="waste-items">
+          <!-- 未展开：添加入口 -->
+          <template v-if="!wastePicking">
+            <button class="waste-add" type="button" @click="wastePicking = true">
+              <el-icon :size="14"><Plus /></el-icon>
+              <span>添加不良品项</span>
+              <span v-if="selectedWasteItems.length" class="waste-add-num">{{ selectedWasteItems.length }}</span>
+            </button>
+          </template>
+
+          <!-- 展开：勾选网格 -->
+          <template v-else>
+            <div class="waste-grid">
+              <button
+                v-for="name in wasteItemNames"
+                :key="name"
+                type="button"
+                class="waste-chip"
+                :class="{ on: selectedWasteItems.includes(name) }"
+                @click="toggleWasteItem(name)"
+              >
+                {{ name }}
+              </button>
+            </div>
+            <button class="waste-done" type="button" @click="wastePicking = false">完成</button>
+          </template>
+
+          <!-- 已选输入行 -->
+          <div v-for="name in selectedWasteItems" :key="name" class="waste-row">
+            <span class="waste-name">{{ name }}</span>
+            <el-input-number
+              v-model="form.wasteItems[name]"
+              :min="0"
+              :precision="0"
+              :controls="false"
+              placeholder="0"
+              style="width: 110px"
+            />
+            <button class="waste-del" type="button" aria-label="移除" @click="removeWasteItem(name)">
+              <el-icon :size="12"><Close /></el-icon>
+            </button>
+          </div>
+        </div>
+      </el-form-item>
       <el-form-item label="用时（分）">
         <el-input-number v-model="form.workingMinutes" :min="0" :precision="0" :controls="false" placeholder="选填" style="width: 100%" />
       </el-form-item>
@@ -87,8 +134,61 @@ const emit = defineEmits(['success'])
 
 const auth = useAuthStore()
 
-const form = reactive({ validNum: 0, wasteNum: 0, workingMinutes: undefined, isFinish: false, remark: '' })
+const form = reactive({ validNum: 0, wasteNum: 0, workingMinutes: undefined, isFinish: false, remark: '', wasteItems: {} })
 const submitting = ref(false)
+
+/** 当前工序配置的不良品项（来自快工单工序 waste_item_names），用于报工明细选择 */
+const wasteItemNames = ref([])
+/** 用户主动勾选的不良品项（仅这些显示输入框） */
+const selectedWasteItems = ref([])
+/** 是否正在展开勾选网格 */
+const wastePicking = ref(false)
+let craftsCache = null
+/** 不良品项字典（全企业，name → code 编号），提交时映射编号（传名称会报「不良品项不存在」） */
+const wasteDict = ref([])
+
+/** 勾选/取消勾选不良品项 */
+function toggleWasteItem(name) {
+  const i = selectedWasteItems.value.indexOf(name)
+  if (i >= 0) {
+    selectedWasteItems.value.splice(i, 1)
+    delete form.wasteItems[name]
+  } else {
+    selectedWasteItems.value.push(name)
+    if (!(name in form.wasteItems)) form.wasteItems[name] = 0
+  }
+}
+
+/** 移除已选不良品项 */
+function removeWasteItem(name) {
+  const i = selectedWasteItems.value.indexOf(name)
+  if (i >= 0) selectedWasteItems.value.splice(i, 1)
+  delete form.wasteItems[name]
+}
+
+async function loadWasteItems() {
+  const craftName = props.task?.craftName
+  wasteItemNames.value = []
+  selectedWasteItems.value = []
+  wastePicking.value = false
+  if (!craftName) return
+  try {
+    if (!craftsCache) craftsCache = (await api.get('/crafts')) ?? []
+    const c = craftsCache.find((x) => x.name === craftName)
+    wasteItemNames.value = (c?.wasteItemNames ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  } catch {
+    wasteItemNames.value = []
+  }
+  // 不良品项字典（name → code），弹窗打开时拉一次，带后端缓存
+  try {
+    wasteDict.value = (await api.get('/crafts/waste-items')) ?? []
+  } catch {
+    wasteDict.value = []
+  }
+}
 
 /** 报工人选择：候选 = 外部人员名单（含当日编码）按工序可报工人过滤 + 当前用户兜底 */
 const allUsers = ref([])
@@ -141,6 +241,11 @@ const remaining = computed(() =>
   Math.max(0, (Number(props.task?.num) || 0) - (Number(props.task?.validNum) || 0)),
 )
 
+/** 不良品明细自动汇总（配置了不良品项的工序，不良品总数由此得出） */
+const wasteTotal = computed(() =>
+  Object.values(form.wasteItems).reduce((s, n) => s + (Number(n) || 0), 0),
+)
+
 /** 已完成百分比（0-100），用于进度条 */
 const donePct = computed(() => {
   const num = Number(props.task?.num) || 0
@@ -157,26 +262,36 @@ watch(
       form.workingMinutes = undefined
       form.isFinish = false
       form.remark = ''
+      form.wasteItems = {}
       loadReporters()
+      loadWasteItems()
     }
   },
 )
 
 async function submit() {
-  if (form.validNum <= 0 && form.wasteNum <= 0) {
+  // 配置了不良品项的工序：总数由明细汇总得出；未配置的用输入框值
+  const wasteNum = wasteItemNames.value.length ? wasteTotal.value : Number(form.wasteNum)
+  if (form.validNum <= 0 && wasteNum <= 0) {
     ElMessage.warning('请至少填写良品数或不良品数')
     return
   }
   submitting.value = true
   try {
     const rep = reporterOptions.value.find((o) => o.kgdUserId === reporterId.value)
+    // 不良品项明细：仅提交数量>0 的项；wasteItemCode 映射为字典编号（快工单要求编号，传名称报「不良品项不存在」）
+    const codeByName = new Map(wasteDict.value.map((w) => [w.name, w.code]))
+    const wasteItems = Object.entries(form.wasteItems)
+      .filter(([, n]) => Number(n) > 0)
+      .map(([name, n]) => ({ wasteItemCode: codeByName.get(name) ?? name, num: Number(n) }))
     const res = await api.post('/report', {
       produceCraftId: props.task.id,
       validNum: Number(form.validNum),
-      wasteNum: Number(form.wasteNum),
+      wasteNum,
       isFinish: form.isFinish,
       workingMinutes: form.workingMinutes ?? undefined,
       remark: form.remark || undefined,
+      wasteItems: wasteItems.length ? wasteItems : undefined,
       reportUserId: reporterId.value ?? auth.user?.kgdUserId,
       reportUserName: rep?.name ?? auth.user?.name,
     })
@@ -236,77 +351,57 @@ async function submit() {
   gap: 8px;
 }
 
-.bill-code {
+.bill-head {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--muted-foreground);
-  min-width: 0;
-}
-
-.bill-code .code {
-  font-family: 'SF Mono', 'JetBrains Mono', Consolas, monospace;
-  color: var(--foreground);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.bill-goods {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--foreground);
-  line-height: 1.45;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-  word-break: break-all;
-}
-
-/* ===== 统计区：左右分栏 + 完成度进度条 ===== */
-.bill-stats {
-  display: flex;
-  flex-direction: column;
+  align-items: baseline;
   gap: 10px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 10px 14px;
-  font-variant-numeric: tabular-nums;
-}
-
-.bs-main {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.bs-left,
-.bs-right {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
   min-width: 0;
 }
 
-.bs-right {
-  align-items: flex-end;
-  text-align: right;
-}
-
-.bs-label {
+.bill-code {
+  flex-shrink: 0;
+  font-family: 'SF Mono', 'JetBrains Mono', Consolas, monospace;
   font-size: 11px;
   color: var(--muted-foreground);
 }
 
-.bs-num {
-  font-size: 22px;
+.bill-goods {
+  font-size: 14.5px;
   font-weight: 600;
-  line-height: 1.1;
+  color: var(--foreground);
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  word-break: break-all;
+}
+
+/* ===== 统计区：单行（已报良品 + 进度条 + 剩余） ===== */
+.bill-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bs-good {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.bs-num {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
   letter-spacing: -0.01em;
 }
 
@@ -314,21 +409,15 @@ async function submit() {
   color: var(--success);
 }
 
-.bs-num.remain {
-  color: var(--warning);
-}
-
 .bs-total {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 11.5px;
   color: var(--muted-foreground);
-  margin-left: 4px;
-  letter-spacing: 0;
 }
 
-/* 完成度进度条 */
 .bs-bar {
-  height: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 5px;
   border-radius: 999px;
   background: var(--muted);
   overflow: hidden;
@@ -339,6 +428,19 @@ async function submit() {
   border-radius: 999px;
   background: linear-gradient(90deg, var(--success), #4cd964);
   transition: width 0.4s ease;
+}
+
+.bs-remain {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.bs-num.remain {
+  color: var(--warning);
 }
 
 /* ===== 表单 ===== */
@@ -373,6 +475,149 @@ async function submit() {
   min-width: 0;
 }
 
+/* ===== 不良品项明细 ===== */
+.waste-items {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+}
+
+/* 添加入口：虚线胶囊 */
+.waste-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  height: 34px;
+  padding: 0 14px;
+  border: 1.5px dashed var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.waste-add:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-soft, rgba(0, 122, 255, 0.06));
+}
+
+.waste-add-num {
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 勾选网格 */
+.waste-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.waste-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--background, transparent);
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  line-height: 1;
+  text-align: center;
+  /* 长文本（如"三坐标检测不良"）单行省略，避免换行导致网格高度不齐 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.waste-chip.on {
+  color: #fff;
+  border-color: transparent;
+  background: var(--primary);
+}
+
+.waste-done {
+  align-self: flex-end;
+  border: none;
+  background: transparent;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 2px 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.waste-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.waste-row + .waste-row {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.waste-name {
+  font-size: 13px;
+  color: var(--foreground);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.waste-del {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--muted, rgba(128, 128, 128, 0.1));
+  color: var(--muted-foreground);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.waste-del:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+}
+
 .report-form :deep(.el-input-number) {
   width: 100%;
 }
@@ -388,22 +633,43 @@ async function submit() {
 
 /* ===== 完工勾选 ===== */
 .finish-check {
-  width: 100%;
-  height: auto;
+  height: 28px;
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(0, 122, 255, 0.06);
-  border: 1px solid rgba(0, 122, 255, 0.16);
-  border-radius: 12px;
-  padding: 12px 14px;
-  box-sizing: border-box;
 }
 
 .finish-check :deep(.el-checkbox__label) {
   font-size: 13px;
   font-weight: 500;
   color: var(--foreground);
+}
+
+/* 不良品汇总展示（替代输入框，由明细求和） */
+.waste-total {
+  width: 100%;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #ef4444;
+  font-variant-numeric: tabular-nums;
+}
+
+.waste-total.none {
+  color: var(--muted-foreground);
+}
+
+.waste-total-hint {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--muted-foreground);
 }
 
 /* ===== 底部按钮 ===== */

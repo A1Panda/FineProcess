@@ -17,8 +17,11 @@
         <div class="uc-main">
           <div class="uc-line1">
             <span class="uc-name">{{ u.name }}</span>
-            <span class="uc-tag" :class="u.role === 'admin' ? 'is-admin' : ''">
-              {{ u.role === 'admin' ? '管理员' : '工人' }}
+            <span
+              class="uc-tag"
+              :class="u.role === 'admin' ? 'is-admin' : u.role === 'manager' ? 'is-manager' : ''"
+            >
+              {{ u.role === 'admin' ? '管理员' : u.role === 'manager' ? '生产主管' : '工人' }}
             </span>
           </div>
           <div class="uc-sub">{{ u.username }} · {{ u.roleName || '—' }}</div>
@@ -256,6 +259,12 @@ onMounted(loadUsers)
   color: var(--primary);
   border-color: rgba(0, 122, 255, 0.35);
   background: var(--primary-soft, rgba(0, 122, 255, 0.1));
+}
+
+.uc-tag.is-manager {
+  color: #e6a23c;
+  border-color: rgba(230, 162, 60, 0.4);
+  background: rgba(230, 162, 60, 0.1);
 }
 
 .uc-sub {

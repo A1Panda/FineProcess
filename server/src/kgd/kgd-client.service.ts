@@ -119,6 +119,25 @@ export class KgdClientService {
     return this.post<any[]>('/open_api/report_work_record/edit', payload);
   }
 
+  /** 删除报工记录（OpenAPI 无删除接口，走公版 Web /api/report_work_record/del） */
+  async deleteReportWorkRecord(id: number): Promise<{ data: any[] }> {
+    const { token, enterpriseId } = await this.loginWeb();
+    const ts = String(Math.floor(Date.now() / 1000));
+    const resp = await this.http.post('/api/report_work_record/del', {
+      timestamp: ts,
+      sign: this.webSign(ts),
+      channel: WEB_CHANNEL,
+      token,
+      enterprise_id: enterpriseId,
+      id,
+    });
+    const body = resp.data;
+    if (!body?.success) {
+      throw new Error(`快工单接口错误: ${body?.msg ?? '删除报工失败'}`);
+    }
+    return { data: body.data ?? [] };
+  }
+
   /** 报工记录列表 */
   listReportRecords(params: Record<string, unknown> = {}) {
     return this.post<any[]>('/open_api/report_work_record/list', params);
@@ -239,6 +258,38 @@ export class KgdClientService {
     const body = resp.data;
     if (!body?.success) throw new Error(`公版报工记录列表失败: ${body?.msg ?? '未知错误'}`);
     return { data: body.data ?? [], count: body.count };
+  }
+
+  /**
+   * 公版 Web 不良品项字典（企业级，含 code 编号 / name 名称）。
+   * 报工提交不良品项时 waste_item_code 必须传编号（如气孔=01），名称会报
+   * 「不良品项【xxx】不存在」。OpenAPI 无此字典，公版接口分页可全量拉取。
+   */
+  async listWebWasteItems(): Promise<{ data: any[]; count?: number }> {
+    const { token, enterpriseId } = await this.loginWeb();
+    const rows: any[] = [];
+    const PAGE = 100;
+    let page = 1;
+    for (;;) {
+      const ts = String(Math.floor(Date.now() / 1000));
+      const resp = await this.http.post('/api/waste_item/list', {
+        pageNo: page,
+        pageSize: PAGE,
+        timestamp: ts,
+        sign: this.webSign(ts),
+        channel: WEB_CHANNEL,
+        token,
+        enterprise_id: enterpriseId,
+      });
+      const body = resp.data;
+      if (!body?.success) throw new Error(`公版不良品项列表失败: ${body?.msg ?? '未知错误'}`);
+      const pageRows: any[] = body.data ?? [];
+      rows.push(...pageRows);
+      const count = body.count ?? rows.length;
+      if (pageRows.length < PAGE || page * PAGE >= count) break;
+      page++;
+    }
+    return { data: rows, count: rows.length };
   }
 
   // ===== 用户 =====
