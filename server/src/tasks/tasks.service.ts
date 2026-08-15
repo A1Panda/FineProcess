@@ -6,6 +6,7 @@ import { KgdSyncService } from '../kgd/kgd-sync.service';
 import { KgdBillCache } from '../kgd/kgd-bill-cache.entity';
 import { KgdTaskCache } from '../kgd/kgd-task-cache.entity';
 import { KgdReportCache } from '../report/kgd-report-cache.entity';
+import { User } from '../auth/users.entity';
 import { JwtPayload } from '../auth/auth.service';
 
 /** 临期提醒天数：交期距今天 <= 该值视为临期（含今天到期） */
@@ -44,6 +45,8 @@ export interface TaskView {
   standardWorkingMinutes: string;
   /** 交期（来自加工单 delivery_date，无则空串） */
   deliveryDate: string | null;
+  /** 自定义目标完成日期（人工设置，优先于 deliveryDate 用于日均计算；无则空串） */
+  targetDate: string | null;
   /** 该任务可报工人姓名（逗号分隔，快工单按工序配置），供报工时选择报工人 */
   reportableUserNames: string | null;
   /** 整张加工单的工序进度（同单按工艺顺序排列，含当前任务所在工序） */
@@ -101,6 +104,59 @@ export interface CraftTrendItem {
   };
 }
 
+/** 报工统计：窗口内单日产出 */
+export interface ReportStatsDay {
+  date: string;
+  valid: number;
+  waste: number;
+  cnt: number;
+}
+
+/** 报工统计：单条产线（报工人所属部门/分组）汇总 */
+export interface ReportStatsLine {
+  /** 产线/分组名（如 生产部/南线、包装部/打磨/A组） */
+  line: string;
+  valid: number;
+  waste: number;
+  cnt: number;
+  /** 一次合格率（良品/(良品+废品)，无废品数据为 100） */
+  passRate: number;
+}
+
+/** 报工统计：按工序汇总（含该工序下各产线细分） */
+export interface ReportStatsCraft {
+  name: string;
+  valid: number;
+  waste: number;
+  cnt: number;
+  passRate: number;
+  /** 该工序下各产线汇总（按良品降序） */
+  lines: ReportStatsLine[];
+}
+
+/** 报工统计：按报工人汇总行（含所属产线/分组） */
+export interface ReportStatsRow {
+  name: string;
+  /** 报工人所属产线/分组（department_path_names，查不到为 未分组） */
+  line: string;
+  valid: number;
+  waste: number;
+  cnt: number;
+  /** 一次合格率（良品/(良品+废品)，无废品数据为 100） */
+  passRate: number;
+}
+
+/** 报工统计：近 N 天按日/按工序（含产线）/按报工人汇总 */
+export interface ReportStatsResult {
+  days: number;
+  startDate: string;
+  endDate: string;
+  daily: ReportStatsDay[];
+  crafts: ReportStatsCraft[];
+  users: ReportStatsRow[];
+  generatedAt: string;
+}
+
 /** 完工预测：工序明细（一道工序把整单数量做一遍 = 1 件次） */
 export interface BillForecastCraft {
   name: string;
@@ -115,9 +171,9 @@ export interface BillForecastCraft {
   weekValid: number;
   /** 近 7 天该工序有报工的天数 */
   weekActive: number;
-  /** 该工序日均件次（近 7 天报工 / 有报工天数），无报工为 0 */
+  /** 该工序日均件次（近 7 天报工 / 有报工天数），仅作展示 */
   daily: number;
-  /** 该工序预计还需天数（未完成且近 7 天有报工才有值），null=无法按工序估算 */
+  /** 该工序预计还需天数（未完成且最近有报工才有值），null=无法按工序估算 */
   etaDays: number | null;
 }
 
@@ -149,9 +205,9 @@ export interface BillForecastRow {
   weekTotal: number;
   /** 有报工的天数 */
   activeDays: number;
-  /** 日均件次（近 7 天总量 / 有报工天数），无报工为 0 */
+  /** 日均件次（近 7 天总量 / 有报工天数），仅作展示 */
   dailyAvg: number;
-  /** 预计还需天数（按日均件次），无数据为 null */
+  /** 预计还需天数（按最近报工日速度），无数据为 null */
   etaDays: number | null;
   /** 预计完成日期（YYYY-MM-DD），无数据为 null */
   etaDate: string | null;
@@ -211,6 +267,7 @@ export class TasksService {
     @InjectRepository(KgdTaskCache) private readonly taskCache: Repository<KgdTaskCache>,
     @InjectRepository(KgdBillCache) private readonly billCache: Repository<KgdBillCache>,
     @InjectRepository(KgdReportCache) private readonly reportCache: Repository<KgdReportCache>,
+    @InjectRepository(User) private readonly users: Repository<User>,
   ) {}
 
   private toView(t: KgdTaskCache, deliveryDate: string | null = null): TaskView {
@@ -237,6 +294,7 @@ export class TasksService {
       unitMoney: '',
       standardWorkingMinutes: '',
       deliveryDate,
+      targetDate: t.targetDate ?? null,
       reportableUserNames: t.reportableUserNames,
       craftProgress: [],
     };
@@ -831,18 +889,27 @@ export class TasksService {
       const craftWeek = craftWeekMap.get(b.code) ?? new Map<string, Map<string, number>>();
       // 每道工序的周报工 + 日均 + 预估天数（工序间为顺序加工，完工由"最慢的工序"决定）
       const craftEtas: number[] = [];
-      const craftsDetail: BillForecastCraft[] = effCrafts.map((c) => {
+      // 第一遍：各工序周报工统计 + 最近报工日速度
+      const withSpeed = effCrafts.map((c) => {
         const craftDays = craftWeek.get(c.name) ?? new Map<string, number>();
         const weekValid = Array.from(craftDays.values()).reduce((s, v) => s + v, 0);
         const weekActive = Array.from(craftDays.values()).filter((v) => v > 0).length;
         const daily = weekActive ? weekValid / weekActive : 0;
-        const remain = Math.max(0, c.plan - c.valid);
+        return { c, weekValid, weekActive, daily, recentSpeed: this.recentDaySpeed(craftDays) };
+      });
+      // 参照速度：同单报工≥3天的稳定工序的最近报工日速度均值（刚开工工序借用，防 1 天数据误判产能）
+      const stableSpeeds = withSpeed.filter((x) => x.weekActive >= 3 && x.recentSpeed > 0).map((x) => x.recentSpeed);
+      const refSpeed = stableSpeeds.length ? stableSpeeds.reduce((s, v) => s + v, 0) / stableSpeeds.length : 0;
+      const craftsDetail: BillForecastCraft[] = withSpeed.map((x) => {
+        // 速度选取：本工序报工≥3天用自己的最近报工日速度；不足3天借用同单稳定工序均值；无参照退回自己的速度
+        const speed = x.weekActive >= 3 ? x.recentSpeed : refSpeed > 0 ? refSpeed : x.recentSpeed;
+        const remain = Math.max(0, x.c.plan - x.c.valid);
         let etaDays: number | null = null;
-        if (c.status !== 3 && remain > 0 && daily > 0) {
-          etaDays = Math.ceil(remain / daily);
+        if (x.c.status !== 3 && remain > 0 && speed > 0) {
+          etaDays = Math.ceil(remain / speed);
           craftEtas.push(etaDays);
         }
-        return { ...c, weekValid, weekActive, daily: Math.round(daily * 10) / 10, etaDays };
+        return { ...x.c, weekValid: x.weekValid, weekActive: x.weekActive, daily: Math.round(x.daily * 10) / 10, etaDays };
       });
       const totalWork = craftsDetail.reduce((s, c) => s + c.plan, 0);
       const doneWork = craftsDetail.reduce((s, c) => s + c.valid, 0);
@@ -864,11 +931,13 @@ export class TasksService {
       const weekTotal = weekDays.reduce((s, d) => s + d.valid, 0);
       const activeDays = weekDays.filter((d) => d.valid > 0).length;
       const dailyAvg = activeDays ? Math.round((weekTotal / activeDays) * 10) / 10 : 0;
+      // 整单预估用"最近报工日速度"（当前实际节奏），日均件次仅作展示
+      const recentSpeed = this.recentDaySpeed(weekMap.get(b.code) ?? new Map<string, number>());
       let etaDays: number | null = null;
       let etaDate: string | null = null;
-      if (dailyAvg > 0) {
+      if (recentSpeed > 0) {
         // 整单口径 + 各工序瓶颈口径取大，避免低估最慢工序的耗时
-        const aggDays = remaining > 0 ? Math.ceil(remaining / dailyAvg) : 0;
+        const aggDays = remaining > 0 ? Math.ceil(remaining / recentSpeed) : 0;
         const craftMax = craftEtas.length ? Math.max(...craftEtas) : 0;
         etaDays = Math.max(aggDays, craftMax);
         etaDate = this.daysAhead(today, etaDays);
@@ -994,6 +1063,128 @@ export class TasksService {
     return { days: n, startDate: start, endDate: today, daysList, crafts, generatedAt: new Date().toISOString() };
   }
 
+  /**
+   * 管理员数据大屏：报工统计（近 N 天按日/按工序/按报工人汇总良品与废品）。
+   * - days：统计天数（7~30，默认 7）
+   * - 数据取自 kgd_report_cache.report_time（公版回填时间）；系统报工无工时字段
+   *   （working_minutes 全为 0），故用"报工次数"反映每日工作强度
+   */
+  async getReportStats(days = 7): Promise<ReportStatsResult> {
+    const n = Math.min(30, Math.max(7, Number(days) || 7));
+    const today = fmtToday();
+    const start = this.daysAhead(today, -(n - 1));
+
+    // 一次查询按 工序+报工人+日 聚合，再本地归并出三张视图，避免三趟扫描
+    const rows = (await this.reportCache
+      .createQueryBuilder('r')
+      .select("COALESCE(r.craft_name, '')", 'craftName')
+      .addSelect("COALESCE(r.report_user_name, '')", 'userName')
+      .addSelect('SUBSTRING(r.report_time, 1, 10)', 'day')
+      .addSelect('SUM(CAST(r.valid_num AS DECIMAL(20,2)))', 'valid')
+      .addSelect('SUM(CAST(r.waste_num AS DECIMAL(20,2)))', 'waste')
+      .addSelect('COUNT(*)', 'cnt')
+      .where("r.report_time <> '' AND r.report_time >= :start AND r.report_time < :end", {
+        start: `${start} 00:00:00`,
+        end: `${this.daysAhead(today, 1)} 00:00:00`,
+      })
+      .groupBy('r.craft_name')
+      .addGroupBy('r.report_user_name')
+      .addGroupBy('SUBSTRING(r.report_time, 1, 10)')
+      .getRawMany()) as Array<{
+      craftName: string;
+      userName: string;
+      day: string;
+      valid: string;
+      waste: string;
+      cnt: string;
+    }>;
+
+    const dayMap = new Map<string, ReportStatsDay>();
+    const craftMap = new Map<string, ReportStatsCraft>();
+    const userMap = new Map<string, ReportStatsRow>();
+
+    // 报工人 → 产线/分组（users.department_path_names，如 生产部/南线），查不到归 未分组
+    const userRows = await this.users.find({ select: { name: true, departmentPathNames: true } });
+    const lineOf = new Map<string, string>();
+    for (const u of userRows) {
+      if (u.name) lineOf.set(u.name, u.departmentPathNames || '');
+    }
+
+    for (const r of rows) {
+      const valid = Number(r.valid) || 0;
+      const waste = Number(r.waste) || 0;
+      const cnt = Number(r.cnt) || 0;
+      const d = r.day || '';
+      if (d) {
+        const cur = dayMap.get(d) ?? { date: d, valid: 0, waste: 0, cnt: 0 };
+        cur.valid += valid;
+        cur.waste += waste;
+        cur.cnt += cnt;
+        dayMap.set(d, cur);
+      }
+      const cname = r.craftName || '未知工序';
+      const line = lineOf.get(r.userName) || '未分组';
+      let c = craftMap.get(cname);
+      if (!c) {
+        c = { name: cname, valid: 0, waste: 0, cnt: 0, passRate: 100, lines: [] };
+        craftMap.set(cname, c);
+      }
+      c.valid += valid;
+      c.waste += waste;
+      c.cnt += cnt;
+      // 工序下按产线细分
+      let ln = c.lines.find((l) => l.line === line);
+      if (!ln) {
+        ln = { line, valid: 0, waste: 0, cnt: 0, passRate: 100 };
+        c.lines.push(ln);
+      }
+      ln.valid += valid;
+      ln.waste += waste;
+      ln.cnt += cnt;
+      const uname = r.userName || '未署名';
+      const u = userMap.get(uname) ?? { name: uname, line: lineOf.get(uname) || '未分组', valid: 0, waste: 0, cnt: 0, passRate: 100 };
+      u.valid += valid;
+      u.waste += waste;
+      u.cnt += cnt;
+      userMap.set(uname, u);
+    }
+
+    const pass = (v: number, w: number) => (v + w > 0 ? Math.round((v / (v + w)) * 1000) / 10 : 100);
+
+    // 补齐窗口内每一天（无报工的天显示 0）
+    const daily: ReportStatsDay[] = [];
+    for (let i = 0; i < n; i++) {
+      const date = this.daysAhead(start, i);
+      daily.push(dayMap.get(date) ?? { date, valid: 0, waste: 0, cnt: 0 });
+    }
+
+    const crafts = [...craftMap.values()].map((c) => ({
+      ...c,
+      passRate: pass(c.valid, c.waste),
+      lines: c.lines
+        .map((l) => ({ ...l, passRate: pass(l.valid, l.waste) }))
+        .sort((a, b) => b.valid - a.valid),
+    }));
+    crafts.sort((a, b) => b.valid - a.valid);
+
+    const users = [...userMap.values()].map((u) => ({ ...u, passRate: pass(u.valid, u.waste) }));
+    users.sort((a, b) => b.valid - a.valid);
+
+    return { days: n, startDate: start, endDate: today, daily, crafts, users, generatedAt: new Date().toISOString() };
+  }
+
+  /**
+   * 设置/清除任务的自定义目标完成日期（优先于加工单交期，用于日均加工量计算）。
+   * - date：YYYY-MM-DD；传空串/null 表示清除（恢复使用加工单交期）
+   */
+  async setTargetDate(taskId: number, date: string | null): Promise<{ taskId: number; targetDate: string | null }> {
+    const task = await this.taskCache.findOneBy({ taskId });
+    if (!task) throw new BadRequestException('任务不存在');
+    const targetDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+    await this.taskCache.update({ taskId }, { targetDate });
+    return { taskId, targetDate };
+  }
+
   /** 交期从早到晚比较（无交期排最后） */
   private compareDelivery(a: BillProgressRow, b: BillProgressRow): number {
     const da = a.deliveryDate || '9999-99-99';
@@ -1014,5 +1205,18 @@ export class TasksService {
     d.setDate(d.getDate() + days);
     const p = (n: number) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+
+  /** 最近报工日速度：日期 Map 中取最近一个有报工日期的件次（当前实际节奏），无报工返回 0 */
+  private recentDaySpeed(dayMap: Map<string, number>): number {
+    let bestDay = '';
+    let best = 0;
+    for (const [day, v] of dayMap) {
+      if (v > 0 && day > bestDay) {
+        bestDay = day;
+        best = v;
+      }
+    }
+    return best;
   }
 }

@@ -131,22 +131,18 @@
       </div>
     </div>
 
-    <!-- 分页 -->
-    <el-pagination
-      v-if="total > pageSize"
-      class="bp-pager"
-      background
-      layout="prev, pager, next"
-      :total="total"
-      :page-size="pageSize"
-      :current-page="page"
-      @current-change="onPage"
-    />
+    <!-- 触底加载更多 -->
+    <div v-show="list.length > 0" ref="loadMoreRef" class="load-more" :class="{ end: noMore }">
+      <el-icon v-if="!noMore && loadingMore" class="lm-spin" :size="14"><Loading /></el-icon>
+      <span v-if="noMore">已加载全部 {{ total }} 条</span>
+      <span v-else-if="loadingMore">加载中…</span>
+      <span v-else>上滑加载更多</span>
+    </div>
   </section>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../../../api'
 
@@ -185,23 +181,25 @@ const statusTabs = [
   { label: '今日已完成', value: 'done-today' },
 ]
 
-async function load() {
-  loading.value = true
+function buildParams(p) {
   const v = activeStatus.value
   const isNumeric = /^[\d,]+$/.test(v)
+  return {
+    status: isNumeric ? v : undefined,
+    scope: v && !isNumeric ? v : undefined,
+    keyword: keyword.value || undefined,
+    sortBy: sortBy.value,
+    overdue: overdueOnly.value || undefined,
+    dueSoon: dueSoonOnly.value || undefined,
+    page: p,
+    pageSize,
+  }
+}
+
+async function load() {
+  loading.value = true
   try {
-    const res = await api.get('/tasks/bill-progress', {
-      params: {
-        status: isNumeric ? v : undefined,
-        scope: v && !isNumeric ? v : undefined,
-        keyword: keyword.value || undefined,
-        sortBy: sortBy.value,
-        overdue: overdueOnly.value || undefined,
-        dueSoon: dueSoonOnly.value || undefined,
-        page: page.value,
-        pageSize,
-      },
-    })
+    const res = await api.get('/tasks/bill-progress', { params: buildParams(page.value) })
     list.value = res.list || []
     total.value = res.total || 0
     Object.assign(stats, res.stats || {})
@@ -215,10 +213,53 @@ function reload(p = 1) {
   load()
 }
 
-function onPage(p) {
-  page.value = p
-  load()
+/* ===== 触底加载更多 ===== */
+const loadMoreRef = ref(null)
+const loadingMore = ref(false)
+const noMore = computed(() => total.value <= list.value.length)
+let moreObserver = null
+
+watch(
+  loadMoreRef,
+  (el) => {
+    if (moreObserver) {
+      moreObserver.disconnect()
+      moreObserver = null
+    }
+    if (!el) return
+    moreObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadMore()
+      },
+      { rootMargin: '200px' },
+    )
+    moreObserver.observe(el)
+  },
+  { flush: 'post' },
+)
+
+/** 追加下一页数据（按单号去重，避免排序波动导致重复/遗漏） */
+async function loadMore() {
+  if (loadingMore.value || loading.value || noMore.value) return
+  loadingMore.value = true
+  const nextPage = page.value + 1
+  try {
+    const res = await api.get('/tasks/bill-progress', { params: buildParams(nextPage) })
+    const items = res.list || []
+    if (items.length) {
+      const seen = new Set(list.value.map((b) => b.code))
+      list.value = [...list.value, ...items.filter((b) => !seen.has(b.code))]
+    }
+    total.value = res.total ?? total.value
+    page.value = nextPage
+  } finally {
+    loadingMore.value = false
+  }
 }
+
+onUnmounted(() => {
+  moreObserver?.disconnect()
+})
 
 function switchStatus(v) {
   activeStatus.value = v
@@ -821,9 +862,27 @@ watch(keyword, () => {
   color: var(--muted-foreground);
 }
 
-/* ===== 分页 ===== */
-.bp-pager {
+/* ===== 触底加载更多 ===== */
+.load-more {
+  display: flex;
+  align-items: center;
   justify-content: center;
+  gap: 6px;
+  padding: 16px 0 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.load-more.end {
+  padding: 10px 0 2px;
+}
+
+.lm-spin {
+  animation: lm-spin 0.9s linear infinite;
+}
+
+@keyframes lm-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ===== 桌面端 ===== */

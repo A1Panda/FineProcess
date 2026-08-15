@@ -320,11 +320,11 @@ async function saveEdit() {
   background: var(--muted);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 12px 14px;
-  margin-bottom: 14px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 
 .bill-goods {
@@ -372,17 +372,13 @@ async function saveEdit() {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: 60vh;
-  overflow-y: auto;
-  margin: 0 -2px;
-  padding: 2px;
 }
 
 .record-item {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 14px;
+  padding: 12px;
 }
 
 .row-top {
@@ -461,7 +457,7 @@ async function saveEdit() {
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 10px;
-  margin-top: 5px;
+  margin-top: 4px;
 }
 
 .report-time {
@@ -489,10 +485,10 @@ async function saveEdit() {
 .row-nums {
   display: flex;
   gap: 0;
-  margin-top: 10px;
+  margin-top: 8px;
   background: var(--muted);
   border-radius: 12px;
-  padding: 9px 0;
+  padding: 7px 0;
 }
 
 .stat {

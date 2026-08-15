@@ -78,21 +78,21 @@
               <el-icon><DataAnalysis /></el-icon>
               <span>数据大屏</span>
             </template>
-            <el-menu-item index="/admin/data/report-stats">
-              <el-icon><Calendar /></el-icon>
-              <span>报工统计</span>
-            </el-menu-item>
             <el-menu-item index="/admin/data/bill-progress">
               <el-icon><List /></el-icon>
               <span>加工单进度</span>
+            </el-menu-item>
+            <el-menu-item index="/admin/data/bill-forecast">
+              <el-icon><AlarmClock /></el-icon>
+              <span>完工预测</span>
             </el-menu-item>
             <el-menu-item index="/admin/data/craft-trend">
               <el-icon><TrendCharts /></el-icon>
               <span>工序产出趋势</span>
             </el-menu-item>
-            <el-menu-item index="/admin/data/bill-forecast">
-              <el-icon><AlarmClock /></el-icon>
-              <span>完工预测</span>
+            <el-menu-item index="/admin/data/report-stats">
+              <el-icon><Calendar /></el-icon>
+              <span>报工统计</span>
             </el-menu-item>
           </el-sub-menu>
         </el-menu>
@@ -139,10 +139,10 @@ const tabs = [
 
 /** 数据大屏模块列表：新增模块在此追加，侧边子菜单与移动端子导航同步生成 */
 const dataTabs = [
-  { path: '/admin/data/report-stats', label: '报工统计', icon: 'Calendar' },
   { path: '/admin/data/bill-progress', label: '加工单进度', icon: 'List' },
-  { path: '/admin/data/craft-trend', label: '工序产出趋势', icon: 'TrendCharts' },
   { path: '/admin/data/bill-forecast', label: '完工预测', icon: 'AlarmClock' },
+  { path: '/admin/data/craft-trend', label: '工序产出趋势', icon: 'TrendCharts' },
+  { path: '/admin/data/report-stats', label: '报工统计', icon: 'Calendar' },
 ]
 
 /** 当前是否处于数据大屏模块下（用于移动端显示子导航） */

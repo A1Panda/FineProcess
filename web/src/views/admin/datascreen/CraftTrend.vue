@@ -61,6 +61,41 @@
     <!-- 图表区 -->
     <div v-loading="loading" class="charts">
       <template v-if="displayCrafts.length">
+        <!-- 按日汇总：每日良品+废品堆叠柱（随工序筛选联动） -->
+        <div class="chart-card">
+          <div class="chart-head">
+            <div class="chart-title">按日汇总</div>
+            <div class="chart-desc">近 {{ days }} 天每日报工良品与废品（堆叠柱），悬浮查看报工次数</div>
+          </div>
+          <svg class="ct-svg" viewBox="0 0 640 240" preserveAspectRatio="xMidYMid meet">
+            <defs>
+              <linearGradient id="ct-valid-grad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#007aff" />
+                <stop offset="100%" stop-color="#007aff" stop-opacity="0.4" />
+              </linearGradient>
+            </defs>
+            <g v-for="(gv, gi) in stackGrid" :key="gi">
+              <line :x1="padL" :x2="W - padR" :y1="gv.y" :y2="gv.y" class="grid-line" />
+              <text :x="padL - 6" :y="gv.y + 3.5" class="axis-text" text-anchor="end">{{ fmt(gv.label) }}</text>
+            </g>
+            <g v-for="(d, di) in dailyBars" :key="di">
+              <g>
+                <title>{{ d.date }}：良品 {{ fmt(d.valid) }} 件 · 废品 {{ fmt(d.waste) }} 件 · 报工 {{ d.cnt }} 次</title>
+                <!-- 下段：良品（蓝）占 [0, valid]，上段：废品（红）占 [valid, valid+waste] -->
+                <rect :x="xAt(di) - barW / 2" :y="stackVal(d.valid)" :width="barW" :height="stackH(d.valid)" rx="3" fill="url(#ct-valid-grad)" />
+                <rect :x="xAt(di) - barW / 2" :y="stackVal(d.valid + d.waste)" :width="barW" :height="stackH(d.waste)" rx="3" fill="#ef4444" opacity="0.85" />
+              </g>
+            </g>
+            <g v-for="(d, di) in xTicks" :key="di">
+              <text :x="xAt(d.i)" :y="H - 8" class="axis-text" text-anchor="middle">{{ d.label }}</text>
+            </g>
+          </svg>
+          <div class="legend">
+            <span class="legend-item"><span class="legend-dot" style="background: #007aff"></span>良品</span>
+            <span class="legend-item"><span class="legend-dot" style="background: #ef4444"></span>废品</span>
+          </div>
+        </div>
+
         <!-- 产量趋势：多工序折线 -->
         <div class="chart-card">
           <div class="chart-head">
@@ -104,41 +139,6 @@
               <span class="legend-dot" :style="{ background: colorOf(ci) }"></span>{{ c.name }}
             </span>
           </div>
-        </div>
-
-        <!-- 报工频次：每日柱状 -->
-        <div class="chart-card">
-          <div class="chart-head">
-            <div class="chart-title">报工频次</div>
-            <div class="chart-desc">近 {{ days }} 天每日报工次数（工作强度，悬浮查看数值）</div>
-          </div>
-          <svg class="ct-svg" viewBox="0 0 640 240" preserveAspectRatio="xMidYMid meet">
-            <defs>
-              <linearGradient id="ct-bar-grad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="var(--primary)" />
-                <stop offset="100%" stop-color="var(--primary)" stop-opacity="0.3" />
-              </linearGradient>
-            </defs>
-            <g v-for="(gv, gi) in cntGrid" :key="gi">
-              <line :x1="padL" :x2="W - padR" :y1="gv.y" :y2="gv.y" class="grid-line" />
-              <text :x="padL - 6" :y="gv.y + 3.5" class="axis-text" text-anchor="end">{{ fmt(gv.label) }}</text>
-            </g>
-            <g v-for="(d, di) in daily" :key="di">
-              <rect
-                :x="xAt(di) - barW / 2"
-                :y="cntVal(d.cnt)"
-                :width="barW"
-                :height="padT + plotH - cntVal(d.cnt)"
-                rx="4"
-                fill="url(#ct-bar-grad)"
-              >
-                <title>{{ d.date }}：{{ d.cnt }} 次</title>
-              </rect>
-            </g>
-            <g v-for="(d, di) in xTicks" :key="di">
-              <text :x="xAt(d.i)" :y="H - 8" class="axis-text" text-anchor="middle">{{ d.label }}</text>
-            </g>
-          </svg>
         </div>
 
         <!-- 效率分析：各工序对比排行 -->
@@ -313,23 +313,33 @@ function smoothPath(c) {
   return d
 }
 
-/* 报工频次：柱状 */
-const maxCnt = computed(() => {
+/* 按日汇总：每日良品+废品堆叠柱（随工序筛选联动） */
+const stackMax = computed(() => {
   let m = 0
-  for (const c of displayCrafts.value) for (const p of c.points) m = Math.max(m, p.cnt)
+  for (const c of displayCrafts.value) for (const p of c.points) m = Math.max(m, p.valid + p.waste)
   return m
 })
-const cntMax = computed(() => niceMax(maxCnt.value))
-const cntGrid = computed(() => makeGrid(cntMax.value))
-const cntVal = computed(() => makeVal(cntMax.value))
-const daily = computed(() =>
+const stackYMax = computed(() => niceMax(stackMax.value))
+const stackGrid = computed(() => makeGrid(stackYMax.value))
+const stackVal = computed(() => makeVal(stackYMax.value))
+function stackH(v) {
+  return (plotH * v) / stackYMax.value
+}
+const barW = computed(() => Math.min(22, (plotW / n.value) * 0.55))
+const dailyBars = computed(() =>
   daysList.value.map((d, i) => {
+    let valid = 0
+    let waste = 0
     let cnt = 0
-    for (const c of displayCrafts.value) cnt += (c.points[i] || {}).cnt || 0
-    return { date: d, cnt }
+    for (const c of displayCrafts.value) {
+      const p = c.points[i] || {}
+      valid += p.valid || 0
+      waste += p.waste || 0
+      cnt += p.cnt || 0
+    }
+    return { date: d, valid, waste, cnt }
   }),
 )
-const barW = computed(() => Math.min(22, (plotW / n.value) * 0.55))
 
 /* X 轴标签：30 天时抽稀 */
 const xTicks = computed(() => {

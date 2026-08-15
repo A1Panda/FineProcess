@@ -65,6 +65,13 @@ export class KgdTaskCache {
   @Column({ name: 'produce_line_names', length: 255, default: '' })
   produceLineNames: string;
 
+  /**
+   * 自定义目标完成日期（YYYY-MM-DD，人工设置，优先于加工单交期用于日均计算）。
+   * 同步 upsert 不写此列，故不会被滚动同步覆盖。
+   */
+  @Column({ name: 'target_date', type: 'varchar', length: 10, nullable: true })
+  targetDate: string | null;
+
   @Column({ type: 'json', nullable: true })
   raw: unknown;
 

@@ -133,7 +133,8 @@
           </div>
           <div class="wf-fc-item">
             <span class="wf-fc-label">预计完成</span>
-            <span class="wf-fc-val" :class="{ 'is-risk': b.overrunDelivery }">{{ etaText(b) }}</span>
+            <span class="wf-fc-val" :class="{ 'is-risk': b.overrunDelivery }">{{ etaDateText(b) }}</span>
+            <span class="wf-fc-note" :class="{ 'is-risk': b.overrunDelivery }">{{ etaNoteText(b) }}</span>
           </div>
         </div>
         </div>
@@ -146,17 +147,13 @@
       </div>
     </div>
 
-    <!-- 分页 -->
-    <el-pagination
-      v-if="total > pageSize"
-      class="wf-pager"
-      background
-      layout="prev, pager, next"
-      :total="total"
-      :page-size="pageSize"
-      :current-page="page"
-      @current-change="onPage"
-    />
+    <!-- 触底加载更多 -->
+    <div v-show="list.length > 0" ref="loadMoreRef" class="load-more" :class="{ end: noMore }">
+      <el-icon v-if="!noMore && loadingMore" class="lm-spin" :size="14"><Loading /></el-icon>
+      <span v-if="noMore">已加载全部 {{ fmt(total) }} 条</span>
+      <span v-else-if="loadingMore">加载中…</span>
+      <span v-else>上滑加载更多</span>
+    </div>
   </section>
 </template>
 
@@ -240,6 +237,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  moreObserver?.disconnect()
   document.removeEventListener('click', onDocClick)
 })
 
@@ -281,18 +279,26 @@ function stackTooltip(b) {
 }
 
 /** 预计完成文案：无数据灰字 / 今日完成 / 正常 / 超交期标红 */
-function etaText(b) {
-  if (!b.etaDate) return '暂无报工数据'
+/** 预计完成日期（独立一行，避免与状态词拼接溢出） */
+function etaDateText(b) {
+  return b.etaDate || '暂无报工数据'
+}
+
+/** 预计完成状态词：今日可完成 / 超交期 / 完成 */
+function etaNoteText(b) {
+  if (!b.etaDate) return '—'
   if (b.etaDays === 0) return '今日可完成'
-  return b.overrunDelivery ? `${b.etaDate} 超交期` : `${b.etaDate} 完成`
+  return b.overrunDelivery ? '超交期' : '预计完成'
+}
+
+function buildParams(p) {
+  return { keyword: keyword.value || undefined, page: p, pageSize }
 }
 
 async function load() {
   loading.value = true
   try {
-    const res = await api.get('/tasks/bill-forecast', {
-      params: { keyword: keyword.value || undefined, page: page.value, pageSize },
-    })
+    const res = await api.get('/tasks/bill-forecast', { params: buildParams(page.value) })
     list.value = res.list || []
     total.value = res.total || 0
     Object.assign(stats, res.stats || {})
@@ -322,10 +328,48 @@ function reload(p = 1) {
   load()
 }
 
-function onPage(p) {
-  page.value = p
-  closePop()
-  load()
+/* ===== 触底加载更多 ===== */
+const loadMoreRef = ref(null)
+const loadingMore = ref(false)
+const noMore = computed(() => total.value <= list.value.length)
+let moreObserver = null
+
+watch(
+  loadMoreRef,
+  (el) => {
+    if (moreObserver) {
+      moreObserver.disconnect()
+      moreObserver = null
+    }
+    if (!el) return
+    moreObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) loadMore()
+      },
+      { rootMargin: '200px' },
+    )
+    moreObserver.observe(el)
+  },
+  { flush: 'post' },
+)
+
+/** 追加下一页数据（按单号去重，避免排序波动导致重复/遗漏） */
+async function loadMore() {
+  if (loadingMore.value || loading.value || noMore.value) return
+  loadingMore.value = true
+  const nextPage = page.value + 1
+  try {
+    const res = await api.get('/tasks/bill-forecast', { params: buildParams(nextPage) })
+    const items = res.list || []
+    if (items.length) {
+      const seen = new Set(list.value.map((b) => b.code))
+      list.value = [...list.value, ...items.filter((b) => !seen.has(b.code))]
+    }
+    total.value = res.total ?? total.value
+    page.value = nextPage
+  } finally {
+    loadingMore.value = false
+  }
 }
 
 /** 输入即搜索：关键词防抖 400ms 后自动刷新 */
@@ -849,6 +893,7 @@ watch(keyword, () => {
 }
 
 .wf-fc-val {
+  max-width: 100%;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--foreground);
@@ -860,6 +905,25 @@ watch(keyword, () => {
 
 .wf-fc-val.is-risk {
   color: #ef4444;
+}
+
+/* 预计完成状态词：独立一行，避免与日期拼接溢出 */
+.wf-fc-note {
+  max-width: 100%;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--success);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wf-fc-note.is-risk {
+  color: #ef4444;
+}
+
+.wf-fc-note:empty {
+  display: none;
 }
 
 /* ===== 空状态 ===== */
@@ -888,9 +952,27 @@ watch(keyword, () => {
   color: var(--muted-foreground);
 }
 
-/* ===== 分页 ===== */
-.wf-pager {
+/* ===== 触底加载更多 ===== */
+.load-more {
+  display: flex;
+  align-items: center;
   justify-content: center;
+  gap: 6px;
+  padding: 16px 0 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.load-more.end {
+  padding: 10px 0 2px;
+}
+
+.lm-spin {
+  animation: lm-spin 0.9s linear infinite;
+}
+
+@keyframes lm-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ===== 桌面端 ===== */

@@ -344,11 +344,11 @@ async function submit() {
   background: var(--muted);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 12px 14px;
-  margin-bottom: 16px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 
 .bill-head {
@@ -445,13 +445,12 @@ async function submit() {
 
 /* ===== 表单 ===== */
 .report-form {
-  max-height: 56vh;
-  overflow-y: auto;
+  /* 滚动交给弹窗 body 统一处理，避免嵌套滚动 */
   padding: 2px;
 }
 
 .report-form :deep(.el-form-item) {
-  margin-bottom: 14px;
+  margin-bottom: 11px;
 }
 
 .report-form :deep(.el-form-item:last-child) {
@@ -462,7 +461,7 @@ async function submit() {
   font-size: 12px;
   color: var(--muted-foreground);
   line-height: 1.4;
-  padding-bottom: 6px;
+  padding-bottom: 4px;
 }
 
 .field-row {

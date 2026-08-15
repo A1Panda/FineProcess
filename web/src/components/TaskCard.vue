@@ -6,6 +6,22 @@
       <span v-if="task.deliveryDate" class="delivery-chip">交期 {{ task.deliveryDate }}</span>
     </div>
 
+    <div
+      v-if="dailyNeed"
+      class="daily-row"
+      :class="dueInfo.overdue ? 'daily-overdue' : ''"
+      :title="task.targetDate ? `自定义目标 ${task.targetDate}，点击修改` : '点击设置提前完成日期'"
+      @click.stop="openTargetDate"
+    >
+      <el-icon :size="13"><TrendCharts /></el-icon>
+      <span>日均需报 <b>{{ dailyNeed }}{{ task.unitName }}</b></span>
+      <span class="daily-sub">
+        <template v-if="task.targetDate">目标 {{ task.targetDate.slice(5) }} · {{ dueText }}</template>
+        <template v-else>{{ dueText }}</template>
+      </span>
+      <el-icon class="daily-set" :size="13"><EditPen /></el-icon>
+    </div>
+
     <div class="bill-code" @click.stop="copyCode">
       <el-icon :size="15"><CopyDocument /></el-icon>
       <span class="code">{{ task.produceBillCode }}</span>
@@ -68,6 +84,50 @@
     <!-- @click.stop：弹窗渲染在卡片内部，阻止关闭按钮/遮罩的点击冒泡到卡片导致弹窗被重新打开 -->
     <div @click.stop>
       <ReportRecordsDialog v-model:visible="recordsVisible" :task="task" @changed="emit('changed')" />
+
+      <!-- 自定义目标完成日期：点击"日均需报"行弹出，设置后日均计算优先使用该日期 -->
+      <el-dialog
+        v-model="targetDateVisible"
+        width="320px"
+        align-center
+        append-to-body
+        class="td-dlg"
+        :show-close="false"
+      >
+        <template #header>
+          <div class="td-head">
+            <span class="td-head-title">设置目标完成日期</span>
+            <span class="td-head-sub">{{ task.produceBillCode }}</span>
+          </div>
+        </template>
+
+        <div class="td-info">
+          <div class="td-info-row">
+            <span class="td-info-key">当前剩余</span>
+            <b class="td-info-val">{{ remaining }}{{ task.unitName }}</b>
+          </div>
+          <div class="td-info-row">
+            <span class="td-info-key">加工单交期</span>
+            <span class="td-info-val">{{ task.deliveryDate || '未设置' }}</span>
+          </div>
+        </div>
+
+        <el-date-picker
+          v-model="targetDateValue"
+          type="date"
+          value-format="YYYY-MM-DD"
+          placeholder="选择目标完成日期"
+          class="td-picker"
+        />
+        <p class="td-tip">日均需报将基于该日期计算，清空日期并保存即恢复默认交期</p>
+
+        <template #footer>
+          <div class="td-actions">
+            <el-button class="td-cancel" @click="targetDateVisible = false">取消</el-button>
+            <el-button type="primary" class="td-save" @click="saveTargetDate">保存</el-button>
+          </div>
+        </template>
+      </el-dialog>
     </div>
   </div>
 </template>
@@ -83,6 +143,25 @@ const emit = defineEmits(['report', 'changed', 'bianchengDone', 'bianchengCancel
 
 const recordsVisible = ref(false)
 
+/* ===== 自定义目标完成日期 ===== */
+const targetDateVisible = ref(false)
+const targetDateValue = ref('')
+
+function openTargetDate() {
+  targetDateValue.value = props.task?.targetDate || ''
+  targetDateVisible.value = true
+}
+
+async function saveTargetDate() {
+  // 日期留空 = 恢复默认：清除自定义日期，回退使用加工单交期
+  await api.post(`/tasks/${props.task.id}/target-date`, { date: targetDateValue.value || null })
+  ElMessage.success(
+    targetDateValue.value ? `已设置目标完成日期 ${targetDateValue.value}` : '已恢复默认交期',
+  )
+  targetDateVisible.value = false
+  emit('changed')
+}
+
 /** 已终结任务（已完成/已取消等）：无操作按钮，数量区显示当前状态 */
 const isTerminal = computed(() => !['未开始', '进行中', '已暂停'].includes(props.task?.statusName))
 const goodsTitle = computed(() => {
@@ -94,6 +173,34 @@ const goodsTitle = computed(() => {
 const remaining = computed(() =>
   Math.max(0, (Number(props.task?.num) || 0) - (Number(props.task?.validNum) || 0)),
 )
+
+/** 交期信息：剩余天数（不足 1 天按 1 天算，避免除零），是否已逾期。
+ *  优先使用自定义目标日期 targetDate，无则回退加工单交期 deliveryDate */
+const dueInfo = computed(() => {
+  const d = props.task?.targetDate || props.task?.deliveryDate
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return null
+  // 按日历天差计算（双方都取当天零点），避免把当天不足 1 天的碎时间向上取整成多一天
+  const [y, m, day] = d.split('-').map(Number)
+  const due = new Date(y, m - 1, day)
+  const t = new Date()
+  const today0 = new Date(t.getFullYear(), t.getMonth(), t.getDate())
+  const diffDays = Math.round((due - today0) / 86400000)
+  return { days: Math.max(1, diffDays), overdue: diffDays < 0 }
+})
+
+/** 到交期每天至少加工数 = 剩余 / 剩余天数（向上取整）；已终结或无剩余不显示 */
+const dailyNeed = computed(() => {
+  if (isTerminal.value || !dueInfo.value) return null
+  const rem = remaining.value
+  if (rem <= 0) return null
+  return Math.ceil(rem / dueInfo.value.days)
+})
+
+/** 日均标签的副文本：已逾期显示"已逾期"，否则显示剩余天数 */
+const dueText = computed(() => {
+  if (!dueInfo.value) return ''
+  return dueInfo.value.overdue ? '已逾期' : `剩${dueInfo.value.days}天`
+})
 
 /** 整张加工单的工序进度列表（每道工序含完成百分比），由后端按工艺顺序返回 */
 const craftProgress = computed(() => props.task?.craftProgress ?? [])
@@ -334,6 +441,63 @@ function copyCode() {
   border-radius: 999px;
   padding: 3px 10px;
   white-space: nowrap;
+}
+
+/* 到交期日均需求：独立提示行，橙色警示，已逾期转红；可点击设置目标日期 */
+.daily-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: var(--warning);
+  background: rgba(255, 149, 0, 0.1);
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.12s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.daily-row:hover {
+  background: rgba(255, 149, 0, 0.18);
+}
+
+.daily-row:active {
+  transform: scale(0.985);
+}
+
+.daily-row.daily-overdue:hover {
+  background: rgba(255, 77, 79, 0.2);
+}
+
+.daily-set {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.daily-row .el-icon {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.daily-row b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.daily-row.daily-overdue {
+  color: var(--destructive);
+  background: rgba(255, 77, 79, 0.12);
+}
+
+.daily-sub {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  opacity: 0.75;
+  font-weight: 400;
 }
 
 .bill-code {

@@ -5,9 +5,10 @@ import { TasksService } from './tasks.service';
 import { KgdBillCache } from '../kgd/kgd-bill-cache.entity';
 import { KgdTaskCache } from '../kgd/kgd-task-cache.entity';
 import { KgdReportCache } from '../report/kgd-report-cache.entity';
+import { User } from '../auth/users.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([KgdBillCache, KgdTaskCache, KgdReportCache])],
+  imports: [TypeOrmModule.forFeature([KgdBillCache, KgdTaskCache, KgdReportCache, User])],
   controllers: [TasksController],
   providers: [TasksService],
 })

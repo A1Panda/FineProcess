@@ -79,6 +79,13 @@ export class TasksController {
     return this.tasks.finish(id);
   }
 
+  /** 设置/清除任务的自定义目标完成日期（优先于加工单交期，用于日均加工量计算）。
+   *  body: { date?: 'YYYY-MM-DD' }，date 传空/缺省表示清除 */
+  @Post(':id/target-date')
+  setTargetDate(@Param('id', ParseIntPipe) id: number, @Body() body: { date?: string }) {
+    return this.tasks.setTargetDate(id, body?.date ?? null);
+  }
+
   /** 编程工序专用：按加工单编号修改加工单状态为"开始" */
   @Post('produce-bill/:code/start')
   startProduceBill(@Param('code') code: string) {
@@ -126,6 +133,13 @@ export class TasksController {
       days !== undefined ? Number(days) : 7,
       crafts ? crafts.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
     );
+  }
+
+  /** 管理员数据大屏：报工统计（近 N 天按日/按工序/按报工人汇总良品与废品）。
+   *  参数：days（7~30，默认 7） */
+  @Get('report-stats')
+  getReportStats(@Query('days') days?: string) {
+    return this.tasks.getReportStats(days !== undefined ? Number(days) : 7);
   }
 
   /** 管理员数据大屏：加工单进度列表（全量 + 每单工序进度 + 逾期/临期标记）。
