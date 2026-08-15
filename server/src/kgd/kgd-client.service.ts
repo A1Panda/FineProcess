@@ -218,6 +218,29 @@ export class KgdClientService {
     return orders;
   }
 
+  /**
+   * 公版 Web 报工记录列表（分页拉取）。OpenAPI 的 report_work_record/list 返回的记录
+   * 不含时间戳字段，公版接口额外返回完整报工时间 report_time（YYYY-MM-DD HH:mm:ss），
+   * 供本地缓存回填报工时间。支持 report_time_start/end 时间窗口过滤。
+   */
+  async listWebReportRecords(params: Record<string, unknown> = {}): Promise<{ data: any[]; count?: number }> {
+    const { token, enterpriseId } = await this.loginWeb();
+    const ts = String(Math.floor(Date.now() / 1000));
+    const resp = await this.http.post('/api/report_work_record/list', {
+      pageNo: 1,
+      pageSize: 200,
+      timestamp: ts,
+      sign: this.webSign(ts),
+      channel: WEB_CHANNEL,
+      token,
+      enterprise_id: enterpriseId,
+      ...params,
+    });
+    const body = resp.data;
+    if (!body?.success) throw new Error(`公版报工记录列表失败: ${body?.msg ?? '未知错误'}`);
+    return { data: body.data ?? [], count: body.count };
+  }
+
   // ===== 用户 =====
 
   /** 用户列表 */

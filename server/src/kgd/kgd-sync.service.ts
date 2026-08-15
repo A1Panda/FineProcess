@@ -28,6 +28,8 @@ const TASK_ACTIVE_STATUSES = [1, 2, 4];
 /** 全量同步时间窗口：只拉近一年内的数据，超过一年的历史不获取。
  *  报工按 report_time、任务按 updated_at 服务端过滤；本地超过一年的记录保留不误删（见全量清理保护） */
 const FULL_SYNC_WINDOW_DAYS = 365;
+/** 公版 Web 报工记录列表每页条数（实测 pageSize 200 有效，全量 3665 条约 19 页） */
+const WEB_PAGE_SIZE = 200;
 
 /** 格式化为 'YYYY-MM-DD HH:mm:ss'（快工单 report_time 过滤精确到秒） */
 function fmtDateTime(d: Date): string {
@@ -544,9 +546,68 @@ export class KgdSyncService implements OnModuleInit {
     this.logger.log(
       `报工全量对账：窗口 [${from}, ${now}] 拉取 ${all.length} 条（total=${total}）；窗口模式跳过本地删除清理（保留超一年历史）`,
     );
+    // 公版系统回填报工时间（OpenAPI 记录无时间戳，纯同步记录在此补齐）；失败不影响本次对账
+    try {
+      await this.syncWebReportTimes();
+    } catch (e) {
+      this.logger.warn(`公版报工时间回填失败（不影响本次对账）: ${(e as Error).message}`);
+    }
     // 同步成功后才推进游标（失败保持原游标，下次继续对账）
     await this.syncMeta.upsert({ key: 'report_last_sync', value: now }, ['key']);
     await this.syncMeta.upsert({ key: 'report_full_sync_at', value: now }, ['key']);
+  }
+
+  /**
+   * 从公版 Web 系统回填报工时间：OpenAPI 报工接口返回的记录不含时间戳字段，
+   * 本地缓存中纯同步记录（report_time 为空）在此按 report_id 精确匹配，回填公版 report_time。
+   * 只回填空值，不覆盖本地报工时间；窗口与全量对账一致（近一年）。可手动触发（POST /tasks/sync-web-report-times）。
+   */
+  async syncWebReportTimes(): Promise<{ updated: number; total: number }> {
+    const start = Date.now();
+    const now = fmtDateTime(new Date());
+    const from = minusDays(now, FULL_SYNC_WINDOW_DAYS);
+    const rows: any[] = [];
+    let page = 1;
+    for (;;) {
+      const { data, count } = await this.kgdClient.listWebReportRecords({ pageNo: page, report_time_start: from });
+      rows.push(...(data ?? []));
+      if ((data?.length ?? 0) < WEB_PAGE_SIZE || page * WEB_PAGE_SIZE >= (count ?? rows.length)) break;
+      page++;
+    }
+    // (id -> report_time)，列表按时间倒序先到即最新，同 id 保留首个；值校验后拼接 SQL
+    const TIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+    const map = new Map<number, string>();
+    for (const r of rows) {
+      if (r.id != null && typeof r.report_time === 'string' && TIME_RE.test(r.report_time)) {
+        const id = Number(r.id);
+        if (!map.has(id)) map.set(id, r.report_time);
+      }
+    }
+    let updated = 0;
+    const CHUNK = 500;
+    const ids = [...map.keys()];
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunkIds = ids.slice(i, i + CHUNK);
+      // 只回填本地 report_time 为空的记录
+      const need = await this.reportCache
+        .createQueryBuilder()
+        .select('id', 'rowId')
+        .addSelect('report_id', 'reportId')
+        .where('report_id IN (:...ids)', { ids: chunkIds })
+        .andWhere(`(report_time = '' OR report_time IS NULL)`)
+        .getRawMany<{ rowId: number; reportId: string }>();
+      if (!need.length) continue;
+      const caseSql = need.map((n) => `WHEN ${Number(n.reportId)} THEN '${map.get(Number(n.reportId))}'`).join(' ');
+      const res = await this.reportCache
+        .createQueryBuilder()
+        .update()
+        .set({ reportTime: () => `CASE report_id ${caseSql} END` })
+        .where('id IN (:...rowIds)', { rowIds: need.map((n) => Number(n.rowId)) })
+        .execute();
+      updated += res.affected ?? 0;
+    }
+    this.logger.log(`公版报工时间回填完成：拉取 ${rows.length} 条，回填 ${updated} 条，耗时 ${Date.now() - start}ms`);
+    return { updated, total: rows.length };
   }
 
   /** 按 [from, now] 窗口拉取 + upsert + 推进游标（from 为游标或近 N 天起点）

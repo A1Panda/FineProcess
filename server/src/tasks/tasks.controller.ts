@@ -55,6 +55,12 @@ export class TasksController {
     return this.tasks.syncNow(full === '1' || full === 'true', reportWindowDays);
   }
 
+  /** 从公版 Web 系统回填报工时间（OpenAPI 报工记录无时间戳，本地纯同步记录以此补齐报工时间） */
+  @Post('sync-web-report-times')
+  syncWebReportTimes() {
+    return this.tasks.syncWebReportTimes();
+  }
+
   /** 开工 */
   @Post(':id/start')
   start(@Param('id', ParseIntPipe) id: number) {

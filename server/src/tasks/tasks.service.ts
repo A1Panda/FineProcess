@@ -306,6 +306,11 @@ export class TasksService {
     return { ok: true, full: forceFull, duration: Date.now() - start };
   }
 
+  /** 从公版 Web 系统回填报工时间（OpenAPI 记录无时间戳，纯同步记录在此补齐） */
+  syncWebReportTimes() {
+    return this.sync.syncWebReportTimes();
+  }
+
   /** 首页统计：各状态数量 / 各工序未完成数量 / 编程未开始加工单数（与任务列表口径一致，排除被锁定的后序工序） */
   async getSummary(user: JwtPayload) {
     const userLike = `%${user.name}%`;
