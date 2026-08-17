@@ -391,7 +391,18 @@ async function loadMore() {
 onUnmounted(() => {
   moreObserver?.disconnect()
   cdResizeObs?.disconnect()
+  if (pollTimer) clearInterval(pollTimer)
 })
+
+/* ===== 自动轮询：跟随后端同步（后端每 5 分钟自动同步，这里静默重拉数据） ===== */
+let pollTimer = null
+function startPolling(ms = 60000) {
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = setInterval(() => {
+    if (document.hidden) return // 页面不可见时不打扰
+    load()
+  }, ms)
+}
 
 function switchStatus(v) {
   activeStatus.value = v
@@ -640,7 +651,10 @@ function craftColor(c) {
   return '#cbd5e1'
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  startPolling()
+})
 
 /** 输入即搜索：关键词防抖 400ms 后自动刷新 */
 let kwTimer = null

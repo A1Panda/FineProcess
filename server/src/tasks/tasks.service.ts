@@ -76,6 +76,8 @@ export interface BillProgressStats {
   inProgress: number;
   /** 单据未完成且任一工序已动工（进行中或已完成）的加工单数 */
   craftActive: number;
+  /** 未开始订单：无任何报工记录 且 所有工序均未开工（未编程 + 已编程未动工） */
+  noStart: number;
   /** 已逾期（未完成且交期已过） */
   overdue: number;
   /** 临期（3 天内到期） */
@@ -783,6 +785,13 @@ export class TasksService {
         'craftActive',
       )
       .addSelect(
+        `SUM(CASE WHEN b.status IN (1,2)
+              AND NOT EXISTS (SELECT 1 FROM kgd_report_cache r WHERE r.bill_code = b.code)
+              AND NOT EXISTS (SELECT 1 FROM kgd_task_cache t WHERE t.bill_code = b.code AND t.status IN (2,3))
+         THEN 1 ELSE 0 END)`,
+        'noStart',
+      )
+      .addSelect(
         `SUM(CASE WHEN b.status IN (1,2) AND b.deliveryDate IS NOT NULL AND b.deliveryDate <> '' AND SUBSTRING(b.deliveryDate,1,10) < '${today}' THEN 1 ELSE 0 END)`,
         'overdue',
       )
@@ -796,6 +805,7 @@ export class TasksService {
       total: Number(statsRow?.total ?? 0),
       inProgress: Number(statsRow?.inProgress ?? 0),
       craftActive: Number(statsRow?.craftActive ?? 0),
+      noStart: Number(statsRow?.noStart ?? 0),
       overdue: Number(statsRow?.overdue ?? 0),
       dueSoon: Number(statsRow?.dueSoon ?? 0),
     };
@@ -1144,6 +1154,7 @@ export class TasksService {
     const n = Math.min(1000, Math.max(1, Number(limit) || 500));
     const qb = this.reportCache
       .createQueryBuilder('r')
+      .leftJoin(KgdBillCache, 'b', 'b.code = r.bill_code')
       .select('r.id', 'id')
       .addSelect('r.bill_code', 'billCode')
       .addSelect('r.craft_name', 'craftName')
@@ -1151,6 +1162,7 @@ export class TasksService {
       .addSelect('r.valid_num', 'validNum')
       .addSelect('r.waste_num', 'wasteNum')
       .addSelect('r.report_time', 'reportTime')
+      .addSelect('b.goods_name', 'goodsName')
       .where("r.report_time <> ''")
       .orderBy('r.report_time', 'DESC')
       .addOrderBy('r.id', 'DESC');
@@ -1170,6 +1182,7 @@ export class TasksService {
       validNum: string;
       wasteNum: string;
       reportTime: string;
+      goodsName: string;
     }>;
     const list = rows.map((r) => ({
       id: Number(r.id),
@@ -1179,6 +1192,7 @@ export class TasksService {
       validNum: Number(r.validNum) || 0,
       wasteNum: Number(r.wasteNum) || 0,
       reportTime: r.reportTime || '',
+      goodsName: r.goodsName || '',
     }));
     return { list, generatedAt: new Date().toISOString() };
   }

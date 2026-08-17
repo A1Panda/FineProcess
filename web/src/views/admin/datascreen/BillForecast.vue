@@ -243,12 +243,24 @@ function closePop() {
 onMounted(() => {
   document.addEventListener('click', onDocClick)
   load()
+  startPolling()
 })
 
 onUnmounted(() => {
   moreObserver?.disconnect()
   document.removeEventListener('click', onDocClick)
+  if (pollTimer) clearInterval(pollTimer)
 })
+
+/* ===== 自动轮询：跟随后端同步（后端每 5 分钟自动同步，这里静默重拉数据） ===== */
+let pollTimer = null
+function startPolling(ms = 60000) {
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = setInterval(() => {
+    if (document.hidden) return // 页面不可见时不打扰
+    load()
+  }, ms)
+}
 
 /* ===== 工序占比条 ===== */
 const CRAFT_COLORS = { 雕刻: '#007aff', 打磨: '#f59e0b', 涂层: '#8b5cf6', 打码: '#10b981' }

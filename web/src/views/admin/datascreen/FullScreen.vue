@@ -17,28 +17,48 @@
       </div>
     </header>
 
-    <!-- KPI 统计条 -->
+    <!-- KPI 统计条：点击可联动下方加工单进度 -->
     <div class="fs-kpis">
-      <div class="fs-kpi k-total">
-        <span class="k-num">{{ fmt(bpStats.unprogrammed + (bpStats.craftActive || 0)) }}</span>
+      <button
+        class="fs-kpi k-total"
+        :class="{ active: kpiFilter === 'todo' }"
+        @click="setKpiFilter('todo')"
+      >
+        <span class="k-num">{{ fmt(bpStats.noStart) }}</span>
         <span class="k-label">未开始订单</span>
-      </div>
-      <div class="fs-kpi k-unprog">
+      </button>
+      <button
+        class="fs-kpi k-unprog"
+        :class="{ active: kpiFilter === 'unprog' }"
+        @click="setKpiFilter('unprog')"
+      >
         <span class="k-num">{{ fmt(bpStats.unprogrammed) }}</span>
         <span class="k-label">未编程</span>
-      </div>
-      <div class="fs-kpi k-run">
+      </button>
+      <button
+        class="fs-kpi k-run"
+        :class="{ active: kpiFilter === 'run' }"
+        @click="setKpiFilter('run')"
+      >
         <span class="k-num">{{ fmt(bpStats.craftActive) }}</span>
         <span class="k-label">进行中</span>
-      </div>
-      <div class="fs-kpi k-overdue">
+      </button>
+      <button
+        class="fs-kpi k-overdue"
+        :class="{ active: kpiFilter === 'overdue' }"
+        @click="setKpiFilter('overdue')"
+      >
         <span class="k-num">{{ fmt(bpStats.overdue) }}</span>
         <span class="k-label">已逾期</span>
-      </div>
-      <div class="fs-kpi k-soon">
+      </button>
+      <button
+        class="fs-kpi k-soon"
+        :class="{ active: kpiFilter === 'soon' }"
+        @click="setKpiFilter('soon')"
+      >
         <span class="k-num">{{ fmt(bpStats.dueSoon) }}</span>
         <span class="k-label">临期(3天内)</span>
-      </div>
+      </button>
     </div>
 
     <!-- 主体网格：左列辅助数据，右列加工单进度（主体） -->
@@ -133,6 +153,13 @@
           <div v-if="recentReports.length" class="fs-recent">
             <div v-for="r in recentReports" :key="r.id" class="fs-recent-row">
               <span class="fs-recent-craft">{{ r.craftName }}</span>
+              <span class="fs-recent-goods" :title="r.goodsName">
+                <span
+                  class="fs-recent-goods-inner"
+                  :class="{ 'is-run': r.goodsOverflow }"
+                  :style="{ '--shift': r.goodsShift + 'px', '--dur': r.goodsDur + 's' }"
+                >{{ r.goodsName || '—' }}</span>
+              </span>
               <span class="fs-recent-user">{{ r.reportUserName || '—' }}</span>
               <span class="fs-recent-num">{{ fmt(r.validNum) }}<em v-if="r.wasteNum > 0" class="fs-today-cw">/{{ fmt(r.wasteNum) }}</em></span>
               <span class="fs-recent-time">{{ agoText(r.reportTime) }}</span>
@@ -147,11 +174,11 @@
         <div class="fs-panel fs-bills">
         <div class="fs-panel-head">
           <span class="fs-panel-title">加工单进度</span>
-          <span class="fs-panel-sub">今日报工优先 · 共 {{ bills.length }} 张</span>
+          <span class="fs-panel-sub">{{ kpiFilterLabel }} · 共 {{ filteredBills.length }} 张</span>
         </div>
         <div class="fs-bill-grid">
           <div
-            v-for="b in bills"
+            v-for="b in filteredBills"
             :key="b.code"
             class="fs-bill"
             :class="{ 'is-overdue': b.overdue, 'is-today': b.todayReport, 'is-unprog': b.status === 1, 'is-paused': b.status === 5 }"
@@ -193,7 +220,7 @@
               <span v-else class="fs-bill-last">暂无报工</span>
             </div>
           </div>
-          <div v-if="!bills.length && !loading" class="fs-empty">暂无进行中加工单</div>
+          <div v-if="!filteredBills.length && !loading" class="fs-empty">{{ kpiFilter === 'all' ? '暂无进行中加工单' : '该分类下暂无加工单' }}</div>
         </div>
         </div>
       </div>
@@ -270,8 +297,36 @@ const loading = ref(true)
 const refreshing = ref(false)
 
 /* ===== 加工单进度统计 ===== */
-const bpStats = reactive({ unprogrammed: 0, total: 0, inProgress: 0, overdue: 0, dueSoon: 0 })
+const bpStats = reactive({ unprogrammed: 0, total: 0, inProgress: 0, craftActive: 0, noStart: 0, overdue: 0, dueSoon: 0 })
 const bills = ref([])
+
+/* ===== KPI 联动筛选：点击统计卡只显示对应分类的加工单 ===== */
+const kpiFilter = ref('all')
+const KPI_LABELS = { all: '全部', todo: '未开始订单', unprog: '未编程', run: '进行中', overdue: '已逾期', soon: '临期(3天内)' }
+const kpiFilterLabel = computed(() => KPI_LABELS[kpiFilter.value] || '全部')
+
+function setKpiFilter(k) {
+  kpiFilter.value = kpiFilter.value === k ? 'all' : k // 再点一次恢复全部
+}
+
+/** 过滤后的加工单：all 不过滤；todo=未开始订单（无报工记录 且 所有工序未开工）；run 按工序开工情况 */
+const filteredBills = computed(() => {
+  const f = kpiFilter.value
+  if (f === 'all') return bills.value
+  if (f === 'todo') {
+    return bills.value.filter(
+      (b) =>
+        (b.status === 1 || b.status === 2) &&
+        !b.lastReportTime &&
+        !(b.crafts || []).some((c) => c.status === 2 || c.status === 3),
+    )
+  }
+  if (f === 'unprog') return bills.value.filter((b) => b.status === 1)
+  if (f === 'run') return bills.value.filter((b) => (b.crafts || []).some((c) => c.status === 2 || c.status === 3))
+  if (f === 'overdue') return bills.value.filter((b) => b.overdue)
+  if (f === 'soon') return bills.value.filter((b) => b.dueSoon)
+  return bills.value
+})
 
 /* 今日日期（本地时区，YYYY-MM-DD），用于标记今日报工的单 */
 function todayStr() {
@@ -366,7 +421,17 @@ async function load() {
     })
     reportCrafts.value = (rs.crafts || []).map((c) => ({ name: c.name, valid: c.valid, waste: c.waste, cnt: c.cnt, passRate: c.passRate }))
     rsDays.value = rs.days || 7
-    recentReports.value = rr.list || []
+    recentReports.value = (rr.list || []).map((r) => {
+      // 产品名溢出检测：超出约 13 个中文字符宽时自动跑马灯滚动
+      const len = (r.goodsName || '').length
+      const overflow = len > 13
+      return {
+        ...r,
+        goodsOverflow: overflow,
+        goodsShift: overflow ? Math.ceil(len * 10.5 - 148) : 0, // 位移 ≈ 内容宽 - 可视宽
+        goodsDur: overflow ? 5 + Math.ceil(len / 6) : 5, // 越长滚得越久（秒）
+      }
+    })
     // 今日报工情况：craft-trend 最后一天即今日（后端最少返回 7 天），t 已在上面定义
     const lastIdx = dailySeries.value.length - 1
     const last = dailySeries.value[lastIdx]
@@ -603,12 +668,24 @@ onMounted(() => {
   load()
   clockTimer = setInterval(() => (now.value = new Date()), 1000)
   nextTick(watchFsSize)
+  startPolling()
 })
 onUnmounted(() => {
   if (clockTimer) clearInterval(clockTimer)
+  if (pollTimer) clearInterval(pollTimer)
   if (fsResizeObs) fsResizeObs.disconnect()
   if (workersRaf) cancelAnimationFrame(workersRaf)
 })
+
+/* ===== 自动轮询：跟随后端同步（后端每 5 分钟自动同步，这里静默重拉数据） ===== */
+let pollTimer = null
+function startPolling(ms = 60000) {
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = setInterval(() => {
+    if (document.hidden) return // 页面不可见时不打扰
+    load()
+  }, ms)
+}
 </script>
 
 <style scoped>
@@ -718,6 +795,24 @@ onUnmounted(() => {
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--card);
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s, transform 0.1s;
+}
+
+.fs-kpi:hover {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+}
+
+.fs-kpi:active {
+  transform: scale(0.97);
+}
+
+.fs-kpi.active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, var(--card));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
 }
 
 .k-num {
@@ -960,9 +1055,10 @@ onUnmounted(() => {
 }
 
 .fs-recent-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 36px 38px 54px;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   padding: 6px 0;
   font-size: 12px;
 }
@@ -972,7 +1068,7 @@ onUnmounted(() => {
 }
 
 .fs-recent-craft {
-  width: 42px;
+  width: 30px;
   flex-shrink: 0;
   font-weight: 600;
   color: var(--foreground);
@@ -981,8 +1077,12 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+.fs-recent-goods {
+  min-width: 0;
+  overflow: hidden;
+}
+
 .fs-recent-user {
-  flex: 1;
   min-width: 0;
   color: var(--muted-foreground);
   overflow: hidden;
@@ -991,19 +1091,39 @@ onUnmounted(() => {
 }
 
 .fs-recent-num {
-  flex-shrink: 0;
+  text-align: right;
   font-weight: 700;
   color: var(--foreground);
   font-variant-numeric: tabular-nums;
 }
 
 .fs-recent-time {
-  flex-shrink: 0;
-  width: 64px;
   font-size: 10.5px;
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+.fs-recent-goods-inner {
+  display: inline-block;
+  white-space: nowrap;
+  max-width: 100%;
+  vertical-align: bottom;
+}
+
+/* 内容溢出时往返滚动（跑马灯），只滚出超出的部分 */
+.fs-recent-goods-inner.is-run {
+  animation: fs-marquee var(--dur, 6s) ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+@keyframes fs-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-1 * var(--shift, 60px)));
+  }
 }
 
 .fs-empty {

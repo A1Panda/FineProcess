@@ -223,7 +223,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../../../api'
 
@@ -496,7 +496,24 @@ function setDays(d) {
   load()
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  startPolling()
+})
+
+/* ===== 自动轮询：跟随后端同步（后端每 5 分钟自动同步，这里静默重拉数据） ===== */
+let pollTimer = null
+function startPolling(ms = 60000) {
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = setInterval(() => {
+    if (document.hidden) return // 页面不可见时不打扰
+    load()
+  }, ms)
+}
+
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+})
 </script>
 
 <style scoped>

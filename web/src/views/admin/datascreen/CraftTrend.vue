@@ -382,7 +382,18 @@ watch(
 
 onUnmounted(() => {
   chartResizeObs?.disconnect()
+  if (pollTimer) clearInterval(pollTimer)
 })
+
+/* ===== 自动轮询：跟随后端同步（后端每 5 分钟自动同步，这里静默重拉数据） ===== */
+let pollTimer = null
+function startPolling(ms = 60000) {
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = setInterval(() => {
+    if (document.hidden) return // 页面不可见时不打扰
+    load()
+  }, ms)
+}
 
 function xAt(i) {
   if (n.value === 1) return padL + plotW.value / 2
@@ -580,7 +591,10 @@ function setDays(d) {
   load()
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  startPolling()
+})
 </script>
 
 <style scoped>
