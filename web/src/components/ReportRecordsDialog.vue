@@ -440,6 +440,28 @@ async function saveEdit() {
   white-space: nowrap;
 }
 
+/* 手机窄屏适配：文字允许换行、行内可自然折行，避免截断 */
+@media (max-width: 480px) {
+  .bill-filter {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .filter-switch {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .filter-label {
+    flex: 1;
+    font-size: 12px;
+    line-height: 1.35;
+    white-space: normal;
+    text-overflow: clip;
+    overflow: visible;
+  }
+}
+
 /* 开关（Apple 风格） */
 .toggle {
   flex-shrink: 0;
