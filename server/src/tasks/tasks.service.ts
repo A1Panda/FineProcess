@@ -269,6 +269,8 @@ export interface BillProgressRow {
   doneCrafts: number;
   /** 整体进度：各工序完成百分比平均（0-100） */
   progressPercent: number;
+  /** 最后报工时间（YYYY-MM-DD HH:mm:ss）；无报工记录时为空串，用于"最近报工"排序 */
+  lastReportTime: string;
   crafts: CraftProgress[];
 }
 
@@ -677,7 +679,7 @@ export class TasksService {
    * 管理员数据大屏：加工单进度列表（全量加工单 + 每单工序进度 + 逾期/临期标记）。
    * - status：多值过滤（逗号分隔），缺省=全部状态
    * - keyword：单号 / HT图号 / 产品名模糊搜索
-   * - sortBy：delivery（默认，逾期/临期优先 + 交期从早到晚）| progress（进度升序）| remaining（剩余工序数降序）
+   * - sortBy：delivery（默认，逾期/临期优先 + 交期从早到晚）| latestReport（最后报工时间新→旧，无报工排最后）| progress（进度升序）| remaining（剩余工序数降序）
    * - overdueOnly：只看已逾期加工单
    * - 数据取自本地缓存（kgd_bill_cache + kgd_task_cache），秒级响应；整体进度 = 各工序完成百分比平均
    */
@@ -718,6 +720,21 @@ export class TasksService {
     }
     if (kw) qb.andWhere('(b.code LIKE :kw OR b.htNo LIKE :kw OR b.goodsName LIKE :kw)', { kw: `%${kw}%` });
     const bills = await qb.getMany();
+
+    // 1.5) "最近报工"排序：批量取每单最后报工时间（kgd_report_cache.report_time，按单取最大值）
+    const needLatestReport = options.sortBy === 'latestReport';
+    const lastReportMap = new Map<string, string>();
+    if (needLatestReport && bills.length) {
+      const reportRows = await this.reportCache
+        .createQueryBuilder('r')
+        .select('r.billCode', 'billCode')
+        .addSelect('MAX(r.reportTime)', 'maxTime')
+        .where('r.billCode IN (:...codes)', { codes: bills.map((b) => b.code) })
+        .andWhere("r.reportTime IS NOT NULL AND r.reportTime <> ''")
+        .groupBy('r.billCode')
+        .getRawMany<{ billCode: string; maxTime: string }>();
+      for (const row of reportRows) lastReportMap.set(row.billCode, row.maxTime);
+    }
 
     // 2) 统计快照（仅随关键词，不随状态筛选/分页）：未编程 / 总单 / 进行中 / 已逾期 / 临期
     const soonDate = this.daysAhead(today, BILL_DUE_SOON_DAYS);
@@ -776,6 +793,7 @@ export class TasksService {
         totalCrafts: crafts.length,
         doneCrafts,
         progressPercent,
+        lastReportTime: lastReportMap.get(b.code) ?? '',
         crafts,
       };
     });
@@ -784,6 +802,15 @@ export class TasksService {
     let list = options.overdueOnly ? rows.filter((r) => r.overdue) : options.dueSoonOnly ? rows.filter((r) => r.dueSoon) : rows;
     const sortBy = options.sortBy ?? 'delivery';
     list.sort((a, b) => {
+      if (sortBy === 'latestReport') {
+        // 有报工的按最后报工时间从新到旧，无报工的排最后
+        const ta = a.lastReportTime || '';
+        const tb = b.lastReportTime || '';
+        if (ta && tb) return tb.localeCompare(ta) || this.compareDelivery(a, b);
+        if (ta) return -1;
+        if (tb) return 1;
+        return this.compareDelivery(a, b);
+      }
       if (sortBy === 'progress') {
         return a.progressPercent - b.progressPercent || this.compareDelivery(a, b);
       }

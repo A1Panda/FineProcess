@@ -137,12 +137,26 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../../../api'
 
 /* ===== 数据 ===== */
-const days = ref(7)
+
+/* 筛选偏好持久化：刷新/重开页面后恢复用户的选择（时间范围 + 工序展开） */
+const PREFS_KEY = 'report-stats-prefs'
+
+function readPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+const prefs = readPrefs()
+
+const days = ref([7, 30].includes(prefs.days) ? prefs.days : 7)
 const ranges = [
   { label: '近 7 天', days: 7 },
   { label: '近 30 天', days: 30 },
@@ -205,6 +219,17 @@ function toggleCraft(name) {
   openSet.value = next
 }
 
+watch([days, openSet], () => {
+  try {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ days: days.value, openSet: [...openSet.value] }),
+    )
+  } catch {
+    /* 存储不可用时忽略 */
+  }
+})
+
 function fmt(n) {
   return Number(n || 0).toLocaleString('zh-CN')
 }
@@ -243,8 +268,10 @@ async function load() {
   try {
     const res = await api.get('/tasks/report-stats', { params: { days: days.value } })
     raw.value = res || { days: days.value, startDate: '', endDate: '', daily: [], crafts: [], users: [] }
-    // 默认展开全部工序
-    openSet.value = new Set((raw.value.crafts || []).map((c) => c.name))
+    // 恢复上次展开的工序；首次进入默认展开全部
+    const names = (raw.value.crafts || []).map((c) => c.name)
+    const saved = Array.isArray(prefs.openSet) ? prefs.openSet.filter((n) => names.includes(n)) : []
+    openSet.value = new Set(saved.length ? saved : names)
   } finally {
     loading.value = false
   }

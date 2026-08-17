@@ -197,7 +197,17 @@ const pageSize = 20
 const loading = ref(false) // 是否已有请求进行中（防止重复触发）
 const loadingMore = ref(false) // 是否正在加载更多
 const loadedAll = ref(false) // 是否已加载全部
-const keyword = ref('') // 模糊搜索关键词（HT图号/产品名）
+
+/* 筛选偏好持久化：刷新/重开页面后恢复用户的选择（状态 tab + 搜索词 + 展开分组，按工序区分） */
+const PREFS_KEY = `craft-workbench-prefs:${craftName.value || ''}`
+let savedPrefs = {}
+try {
+  savedPrefs = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')
+} catch {
+  /* 存储不可用时忽略 */
+}
+if (typeof savedPrefs.activeTab === 'string') activeTab.value = savedPrefs.activeTab
+const keyword = ref(typeof savedPrefs.keyword === 'string' ? savedPrefs.keyword : '') // 模糊搜索关键词（HT图号/产品名）
 const firstLoad = ref(true)
 const refreshing = ref(false)
 const reportVisible = ref(false)
@@ -252,7 +262,7 @@ function groupByHt(items) {
 }
 
 /** 当前展开的图号分组（手风琴：一次只展开一个） */
-const expandedHt = ref(null)
+const expandedHt = ref(typeof savedPrefs.expandedHt === 'string' ? savedPrefs.expandedHt : null)
 
 function toggleGroup(htNo) {
   expandedHt.value = expandedHt.value === htNo ? null : htNo
@@ -265,8 +275,25 @@ const craftTabs = [
   { key: '2', label: '进行中', status: 2 },
   { key: '3', label: '已完成', status: 3 },
 ]
-const craftTab = ref('all')
+const craftTab = ref(typeof savedPrefs.craftTab === 'string' ? savedPrefs.craftTab : 'all')
 const currentCraftTab = computed(() => craftTabs.find((t) => t.key === craftTab.value))
+
+/** 持久化：状态 tab + 搜索词 + 展开分组 */
+watchEffect(() => {
+  try {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({
+        activeTab: activeTab.value,
+        craftTab: craftTab.value,
+        keyword: keyword.value,
+        expandedHt: expandedHt.value,
+      }),
+    )
+  } catch {
+    /* 存储不可用时忽略 */
+  }
+})
 
 // 其他工序：当前页任务按 HT图号 分组
 const groups = computed(() => groupByHt(tasks.value))

@@ -169,7 +169,16 @@ const pageSize = 10
 
 const loading = ref(false)
 const refreshing = ref(false)
-const keyword = ref('')
+
+/* 搜索偏好持久化：刷新/重开页面后恢复搜索词 */
+const PREFS_KEY = 'bill-forecast-prefs'
+let savedKeyword = ''
+try {
+  savedKeyword = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}').keyword || ''
+} catch {
+  /* 存储不可用时忽略 */
+}
+const keyword = ref(typeof savedKeyword === 'string' ? savedKeyword : '')
 const stats = reactive({ total: 0, withData: 0, weekReported: 0, risk: 0 })
 /** 当前展开的每日分工序明细：{ code, date, crafts, left, transform } */
 const dayPop = ref(null)
@@ -372,10 +381,15 @@ async function loadMore() {
   }
 }
 
-/** 输入即搜索：关键词防抖 400ms 后自动刷新 */
+/** 输入即搜索：关键词防抖 400ms 后自动刷新（同时持久化搜索词） */
 let kwTimer = null
 watch(keyword, () => {
   closePop()
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ keyword: keyword.value }))
+  } catch {
+    /* 存储不可用时忽略 */
+  }
   clearTimeout(kwTimer)
   kwTimer = setTimeout(() => reload(1), 400)
 })

@@ -189,6 +189,17 @@ const loadingMore = ref(false) // 是否正在加载更多
 const loadedAll = ref(false) // 是否已加载全部
 const keyword = ref('') // 模糊搜索关键词（HT图号/产品名）
 const activeTab = ref('all')
+
+/* 筛选偏好持久化：刷新/重开页面后恢复用户的选择（状态 tab + 搜索词 + 展开分组） */
+const PREFS_KEY = 'dashboard-prefs'
+let savedPrefs = {}
+try {
+  savedPrefs = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')
+} catch {
+  /* 存储不可用时忽略 */
+}
+if (savedPrefs.keyword) keyword.value = savedPrefs.keyword
+if (typeof savedPrefs.activeTab === 'string') activeTab.value = savedPrefs.activeTab
 const firstLoad = ref(true)
 const refreshing = ref(false)
 const reportVisible = ref(false)
@@ -273,11 +284,27 @@ const groups = computed(() => {
 })
 
 /** 当前展开的图号分组（手风琴：一次只展开一个） */
-const expandedHt = ref(null)
+const expandedHt = ref(typeof savedPrefs.expandedHt === 'string' ? savedPrefs.expandedHt : null)
 
 function toggleGroup(htNo) {
   expandedHt.value = expandedHt.value === htNo ? null : htNo
 }
+
+/** 持久化：状态 tab + 搜索词 + 展开分组 */
+watchEffect(() => {
+  try {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({
+        keyword: keyword.value,
+        activeTab: activeTab.value,
+        expandedHt: expandedHt.value,
+      }),
+    )
+  } catch {
+    /* 存储不可用时忽略 */
+  }
+})
 
 // 数据加载后默认展开第一个分组（手风琴）
 watchEffect(() => {

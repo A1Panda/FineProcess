@@ -59,21 +59,31 @@
     </div>
 
     <!-- 图表区 -->
-    <div v-loading="loading" class="charts">
+    <div ref="chartRef" v-loading="loading" class="charts">
       <template v-if="displayCrafts.length">
         <!-- 按日汇总：每日良品+废品堆叠柱（随工序筛选联动） -->
         <div class="chart-card">
           <div class="chart-head">
             <div class="chart-title">按日汇总</div>
-            <div class="chart-desc">近 {{ days }} 天每日报工良品与废品（堆叠柱），悬浮查看报工次数</div>
+            <div class="chart-desc">近 {{ days }} 天每日报工良品按工序堆叠显示，废品叠加在顶部，点击柱子查看明细</div>
           </div>
-          <svg class="ct-svg" viewBox="0 0 640 240" preserveAspectRatio="xMidYMid meet">
-            <defs>
-              <linearGradient id="ct-valid-grad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#007aff" />
-                <stop offset="100%" stop-color="#007aff" stop-opacity="0.4" />
-              </linearGradient>
-            </defs>
+          <div class="chart-toolbar">
+            <label class="yctl">
+              <span class="yctl-label">Y 轴上限</span>
+              <el-switch
+                v-model="yAuto"
+                size="small"
+                inline-prompt
+                active-text="自动"
+                inactive-text="手动"
+              />
+            </label>
+            <div v-if="!yAuto" class="yctl-input">
+              <input v-model.number="yManualVal" type="number" min="0" step="100" placeholder="上限值" />
+              <span class="yctl-unit">件</span>
+            </div>
+          </div>
+          <svg class="ct-svg" :viewBox="`0 0 ${W} ${H}`" preserveAspectRatio="xMidYMid meet">
             <g v-for="(gv, gi) in stackGrid" :key="gi">
               <line :x1="padL" :x2="W - padR" :y1="gv.y" :y2="gv.y" class="grid-line" />
               <text :x="padL - 6" :y="gv.y + 3.5" class="axis-text" text-anchor="end">{{ fmt(gv.label) }}</text>
@@ -81,9 +91,33 @@
             <g v-for="(d, di) in dailyBars" :key="di">
               <g class="bar-group" @click="openDailyDetail(di)">
                 <title>{{ d.date }}：良品 {{ fmt(d.valid) }} 件 · 废品 {{ fmt(d.waste) }} 件 · 报工 {{ d.cnt }} 次（点击查看明细）</title>
-                <!-- 下段：良品（蓝）占 [0, valid]，上段：废品（红）占 [valid, valid+waste] -->
-                <rect :x="xAt(di) - barW / 2" :y="stackVal(d.valid)" :width="barW" :height="stackH(d.valid)" rx="3" fill="url(#ct-valid-grad)" />
-                <rect :x="xAt(di) - barW / 2" :y="stackVal(d.valid + d.waste)" :width="barW" :height="stackH(d.waste)" rx="3" fill="#ef4444" opacity="0.85" />
+                <!-- 各工序良品段：按工序顺序从下往上堆叠，颜色区分 -->
+                <rect
+                  v-for="(s, si) in d.segs"
+                  :key="si"
+                  :x="xAt(di) - barW / 2"
+                  :y="stackVal(segCum(d.segs, si))"
+                  :width="barW"
+                  :height="stackH(s.valid)"
+                  rx="1"
+                  :fill="s.color"
+                  opacity="0.92"
+                >
+                  <title>{{ s.name }}：良品 {{ fmt(s.valid) }} 件</title>
+                </rect>
+                <!-- 废品：叠加在最顶部（红） -->
+                <rect
+                  v-if="d.waste > 0"
+                  :x="xAt(di) - barW / 2"
+                  :y="stackVal(d.valid + d.waste)"
+                  :width="barW"
+                  :height="stackH(d.waste)"
+                  rx="1"
+                  fill="#ef4444"
+                  opacity="0.85"
+                >
+                  <title>废品 {{ fmt(d.waste) }} 件</title>
+                </rect>
               </g>
             </g>
             <g v-for="(d, di) in xTicks" :key="di">
@@ -91,7 +125,9 @@
             </g>
           </svg>
           <div class="legend">
-            <span class="legend-item"><span class="legend-dot" style="background: #007aff"></span>良品</span>
+            <span v-for="(c, ci) in displayCrafts" :key="c.name" class="legend-item">
+              <span class="legend-dot" :style="{ background: colorOf(ci) }"></span>{{ c.name }}
+            </span>
             <span class="legend-item"><span class="legend-dot" style="background: #ef4444"></span>废品</span>
           </div>
         </div>
@@ -102,7 +138,7 @@
             <div class="chart-title">产量趋势</div>
             <div class="chart-desc">近 {{ days }} 天各工序每日良品数（悬浮查看数值）</div>
           </div>
-          <svg class="ct-svg" viewBox="0 0 640 240" preserveAspectRatio="xMidYMid meet">
+          <svg class="ct-svg" :viewBox="`0 0 ${W} ${H}`" preserveAspectRatio="xMidYMid meet">
             <g v-for="(gv, gi) in yGrid" :key="gi">
               <line :x1="padL" :x2="W - padR" :y1="gv.y" :y2="gv.y" class="grid-line" />
               <text :x="padL - 6" :y="gv.y + 3.5" class="axis-text" text-anchor="end">{{ fmt(gv.label) }}</text>
@@ -212,7 +248,7 @@
       </div>
       <div class="dd-list">
         <div v-for="(r, ri) in detailRows" :key="r.name" class="dd-row">
-          <span class="dd-dot" :style="{ background: colorOf(ri) }"></span>
+          <span class="dd-dot" :style="{ background: colorOf(r.ci) }"></span>
           <span class="dd-main">
             <span class="dd-name">{{ r.name }}</span>
             <span class="dd-meta">废 {{ fmt(r.waste) }} · 报工 {{ r.cnt }} 次</span>
@@ -226,12 +262,26 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../../../api'
 
 /* ===== 数据 ===== */
-const days = ref(7)
+
+/* 筛选偏好持久化：刷新/重开页面后恢复用户的选择（时间范围 + 工序筛选） */
+const PREFS_KEY = 'craft-trend-prefs'
+
+function readPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+const prefs = readPrefs()
+
+const days = ref([7, 30].includes(prefs.days) ? prefs.days : 7)
 const ranges = [
   { label: '近 7 天', days: 7 },
   { label: '近 30 天', days: 30 },
@@ -243,11 +293,22 @@ const crafts = computed(() => raw.value.crafts || [])
 const daysList = computed(() => raw.value.daysList || [])
 
 /* ===== 工序筛选 ===== */
-const isAll = ref(true)
-const selected = ref([])
+const isAll = ref(typeof prefs.isAll === 'boolean' ? prefs.isAll : true)
+const selected = ref(Array.isArray(prefs.selected) ? prefs.selected : [])
 const displayCrafts = computed(() =>
   isAll.value ? crafts.value : crafts.value.filter((c) => selected.value.includes(c.name)),
 )
+
+watch([days, isAll, selected], () => {
+  try {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ days: days.value, isAll: isAll.value, selected: selected.value }),
+    )
+  } catch {
+    /* 存储不可用时忽略 */
+  }
+})
 
 function selectAll() {
   isAll.value = true
@@ -290,21 +351,45 @@ function avgPerReport(c) {
 }
 
 /* ===== SVG 布局 ===== */
-const W = 640
+// 动态测量容器实际宽度：viewBox 宽度 1:1 对应 CSS 像素，避免手机上字体被整体缩放变小
+const chartRef = ref(null)
+const chartW = ref(640)
+const W = computed(() => chartW.value)
 const H = 240
 const padL = 42
 const padR = 14
 const padT = 16
 const padB = 30
-const plotW = W - padL - padR
+const plotW = computed(() => W.value - padL - padR)
 const plotH = H - padT - padB
 const n = computed(() => Math.max(1, daysList.value.length))
+let chartResizeObs = null
+
+watch(
+  chartRef,
+  (el) => {
+    chartResizeObs?.disconnect()
+    chartResizeObs = null
+    if (!el) return
+    const measure = () => {
+      chartW.value = Math.max(280, el.clientWidth)
+    }
+    measure()
+    chartResizeObs = new ResizeObserver(measure)
+    chartResizeObs.observe(el)
+  },
+  { flush: 'post' },
+)
+
+onUnmounted(() => {
+  chartResizeObs?.disconnect()
+})
 
 function xAt(i) {
-  if (n.value === 1) return padL + plotW / 2
+  if (n.value === 1) return padL + plotW.value / 2
   // 两端各留半个柱宽，避免首末柱子贴边/溢出绘图区
   const half = barW.value / 2
-  return padL + half + (i / (n.value - 1)) * (plotW - barW.value)
+  return padL + half + (i / (n.value - 1)) * (plotW.value - barW.value)
 }
 
 function niceMax(v) {
@@ -357,31 +442,63 @@ function smoothPath(c) {
   return d
 }
 
-/* 按日汇总：每日良品+废品堆叠柱（随工序筛选联动） */
+/* 按日汇总：每日良品+废品堆叠柱（随工序筛选联动）
+ * Y 轴按“每日所有工序合计”取最大值，避免单日总量超绘图区导致顶部段被裁剪 */
 const stackMax = computed(() => {
   let m = 0
-  for (const c of displayCrafts.value) for (const p of c.points) m = Math.max(m, p.valid + p.waste)
+  for (let i = 0; i < daysList.value.length; i++) {
+    let s = 0
+    for (const c of displayCrafts.value) {
+      const p = c.points[i] || {}
+      s += (p.valid || 0) + (p.waste || 0)
+    }
+    m = Math.max(m, s)
+  }
   return m
 })
-const stackYMax = computed(() => niceMax(stackMax.value))
+/** 自动 Y 轴上限：按数据峰值留 6% 余量后向上取整到合理刻度，跟随数据动态变化 */
+function autoYMax(need) {
+  if (need <= 0) return 100
+  const unit = need >= 5000 ? 2000 : need >= 2000 ? 1000 : need >= 500 ? 500 : need >= 100 ? 100 : 50
+  return Math.ceil((need * 1.06) / unit) * unit
+}
+
+/* Y 轴上限：自动模式按数据动态计算；手动模式完全尊重输入值（不做自动抬高） */
+const yAuto = ref(true)
+const yManualVal = ref(1000)
+const stackYMax = computed(() => {
+  if (yAuto.value) return autoYMax(stackMax.value)
+  return Math.max(0, Math.round(Number(yManualVal.value) || 0))
+})
 const stackGrid = computed(() => makeGrid(stackYMax.value))
 const stackVal = computed(() => makeVal(stackYMax.value))
 function stackH(v) {
   return (plotH * v) / stackYMax.value
 }
-const barW = computed(() => Math.min(22, (plotW / n.value) * 0.55))
+
+/** 各工序段累计到第 i 段（含）的良品总量，用于堆叠定位 */
+function segCum(segs, i) {
+  let s = 0
+  for (let k = 0; k <= i; k++) s += segs[k].valid
+  return s
+}
+const barW = computed(() => Math.min(22, (plotW.value / n.value) * 0.55))
+/** 每日堆叠柱：segs 为各工序良品段（按工序顺序从下往上堆叠），waste 叠加在顶部 */
 const dailyBars = computed(() =>
   daysList.value.map((d, i) => {
     let valid = 0
     let waste = 0
     let cnt = 0
-    for (const c of displayCrafts.value) {
+    const segs = []
+    displayCrafts.value.forEach((c, ci) => {
       const p = c.points[i] || {}
-      valid += p.valid || 0
+      const v = p.valid || 0
+      if (v > 0) segs.push({ name: c.name, valid: v, color: colorOf(ci) })
+      valid += v
       waste += p.waste || 0
       cnt += p.cnt || 0
-    }
-    return { date: d, valid, waste, cnt }
+    })
+    return { date: d, valid, waste, cnt, segs }
   }),
 )
 
@@ -415,11 +532,11 @@ const detailTotal = computed(() => {
 
 function openDailyDetail(di) {
   detailDate.value = daysList.value[di] || ''
-  // 各工序在该日（索引 di）的报工明细，按良品降序
+  // 各工序在该日（索引 di）的报工明细，按良品降序；颜色用原始工序索引，保证与柱状图/图例一致
   detailRows.value = displayCrafts.value
-    .map((c) => {
+    .map((c, ci) => {
       const p = c.points[di] || {}
-      return { name: c.name, valid: p.valid || 0, waste: p.waste || 0, cnt: p.cnt || 0 }
+      return { name: c.name, ci, valid: p.valid || 0, waste: p.waste || 0, cnt: p.cnt || 0 }
     })
     .sort((a, b) => b.valid - a.valid)
   detailVisible.value = true
@@ -675,6 +792,55 @@ onMounted(load)
   color: var(--muted-foreground);
 }
 
+/* Y 轴上限控件 */
+.chart-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  flex-wrap: wrap;
+  margin: -2px 0 10px;
+}
+
+.yctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.yctl-label {
+  white-space: nowrap;
+}
+
+.yctl-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.yctl-input input {
+  width: 88px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+
+.yctl-input input:focus {
+  border-color: var(--primary);
+}
+
+.yctl-unit {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
 .ct-svg {
   width: 100%;
   height: auto;
@@ -687,7 +853,7 @@ onMounted(load)
 }
 
 .axis-text {
-  font-size: 10px;
+  font-size: 12px;
   fill: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }

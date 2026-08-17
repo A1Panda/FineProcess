@@ -36,6 +36,7 @@
       </el-input>
       <div class="toolbar-right">
         <el-select v-model="sortBy" class="sort-select" @change="reload(1)">
+          <el-option label="最近报工" value="latestReport" />
           <el-option label="交期优先" value="delivery" />
           <el-option label="进度最慢" value="progress" />
           <el-option label="剩余工序多" value="remaining" />
@@ -255,11 +256,44 @@ const expanded = ref([])
 const collapsedGroups = ref([])
 
 const stats = reactive({ unprogrammed: 0, total: 0, inProgress: 0, overdue: 0, dueSoon: 0 })
-const keyword = ref('')
-const sortBy = ref('delivery')
-const activeStatus = ref('1,2,5')
-const overdueOnly = ref(false)
-const dueSoonOnly = ref(false)
+
+/* ===== 筛选偏好持久化：刷新/重开页面后恢复用户的选择 ===== */
+const PREFS_KEY = 'bill-progress-prefs'
+
+function readPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+const prefs = readPrefs()
+
+const keyword = ref(typeof prefs.keyword === 'string' ? prefs.keyword : '')
+const sortBy = ref(typeof prefs.sortBy === 'string' ? prefs.sortBy : 'delivery')
+const activeStatus = ref(typeof prefs.activeStatus === 'string' ? prefs.activeStatus : '1,2,5')
+const overdueOnly = ref(!!prefs.overdueOnly)
+const dueSoonOnly = ref(!!prefs.dueSoonOnly)
+if (Array.isArray(prefs.collapsedGroups)) collapsedGroups.value = prefs.collapsedGroups
+
+watch([keyword, sortBy, activeStatus, overdueOnly, dueSoonOnly, collapsedGroups], () => {
+  try {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({
+        keyword: keyword.value,
+        sortBy: sortBy.value,
+        activeStatus: activeStatus.value,
+        overdueOnly: overdueOnly.value,
+        dueSoonOnly: dueSoonOnly.value,
+        collapsedGroups: collapsedGroups.value,
+      }),
+    )
+  } catch {
+    /* 存储不可用时忽略 */
+  }
+})
 
 /**
  * 统计卡高亮联动：全部(1,2,5)→四卡全亮；未编程(1)/进行中(2)→只亮对应卡；
