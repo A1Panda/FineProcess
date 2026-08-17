@@ -152,7 +152,7 @@
           </div>
           <div v-if="recentReports.length" class="fs-recent">
             <div v-for="r in recentReports" :key="r.id" class="fs-recent-row">
-              <span class="fs-recent-craft">{{ r.craftName }}</span>
+              <span class="fs-recent-craft" :style="{ color: craftNameColor(r.craftName) }">{{ r.craftName }}</span>
               <span class="fs-recent-goods" :title="r.goodsName">
                 <span
                   class="fs-recent-goods-inner"
@@ -642,6 +642,12 @@ function fsSegCum(segs, i) {
 const FS_COLORS = ['#007aff', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#84cc16']
 function fsColorOf(i) {
   return FS_COLORS[i % FS_COLORS.length]
+}
+
+/* 工序名配色：与「工序产出趋势」图例完全一致（同名工序取同一索引色），未知工序兜底灰色 */
+function craftNameColor(name) {
+  const idx = trendCrafts.value.findIndex((c) => c.name === name)
+  return idx >= 0 ? fsColorOf(idx) : '#64748b'
 }
 function fsXAt(i) {
   const inner = fsPlotW - fsBarInset * 2
