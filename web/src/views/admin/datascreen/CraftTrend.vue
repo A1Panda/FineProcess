@@ -79,8 +79,8 @@
               <text :x="padL - 6" :y="gv.y + 3.5" class="axis-text" text-anchor="end">{{ fmt(gv.label) }}</text>
             </g>
             <g v-for="(d, di) in dailyBars" :key="di">
-              <g>
-                <title>{{ d.date }}：良品 {{ fmt(d.valid) }} 件 · 废品 {{ fmt(d.waste) }} 件 · 报工 {{ d.cnt }} 次</title>
+              <g class="bar-group" @click="openDailyDetail(di)">
+                <title>{{ d.date }}：良品 {{ fmt(d.valid) }} 件 · 废品 {{ fmt(d.waste) }} 件 · 报工 {{ d.cnt }} 次（点击查看明细）</title>
                 <!-- 下段：良品（蓝）占 [0, valid]，上段：废品（红）占 [valid, valid+waste] -->
                 <rect :x="xAt(di) - barW / 2" :y="stackVal(d.valid)" :width="barW" :height="stackH(d.valid)" rx="3" fill="url(#ct-valid-grad)" />
                 <rect :x="xAt(di) - barW / 2" :y="stackVal(d.valid + d.waste)" :width="barW" :height="stackH(d.waste)" rx="3" fill="#ef4444" opacity="0.85" />
@@ -181,6 +181,47 @@
         <p class="empty-desc">窗口内没有带报工时间的报工记录</p>
       </div>
     </div>
+
+    <!-- 每日明细弹窗：点击按日汇总柱子查看该日各工序报工 -->
+    <el-dialog
+      v-model="detailVisible"
+      :title="detailTitle"
+      width="92%"
+      :style="{ maxWidth: '560px' }"
+      align-center
+      append-to-body
+      class="day-detail-dlg"
+    >
+      <div class="dd-summary">
+        <div class="dd-stat">
+          <span class="dd-num" style="color: var(--primary)">{{ fmt(detailTotal.valid) }}</span>
+          <span class="dd-label">良品（件）</span>
+        </div>
+        <div class="dd-stat">
+          <span class="dd-num" style="color: #ef4444">{{ fmt(detailTotal.waste) }}</span>
+          <span class="dd-label">废品（件）</span>
+        </div>
+        <div class="dd-stat">
+          <span class="dd-num">{{ fmt(detailTotal.cnt) }}</span>
+          <span class="dd-label">报工次数</span>
+        </div>
+        <div class="dd-stat">
+          <span class="dd-num" style="color: #10b981">{{ detailTotal.passRate }}%</span>
+          <span class="dd-label">合格率</span>
+        </div>
+      </div>
+      <div class="dd-list">
+        <div v-for="(r, ri) in detailRows" :key="r.name" class="dd-row">
+          <span class="dd-dot" :style="{ background: colorOf(ri) }"></span>
+          <span class="dd-main">
+            <span class="dd-name">{{ r.name }}</span>
+            <span class="dd-meta">废 {{ fmt(r.waste) }} · 报工 {{ r.cnt }} 次</span>
+          </span>
+          <span class="dd-valid">{{ fmt(r.valid) }} 件</span>
+        </div>
+        <div v-if="!detailRows.length" class="dd-empty">该日无报工记录</div>
+      </div>
+    </el-dialog>
   </section>
 </template>
 
@@ -260,7 +301,10 @@ const plotH = H - padT - padB
 const n = computed(() => Math.max(1, daysList.value.length))
 
 function xAt(i) {
-  return n.value === 1 ? padL + plotW / 2 : padL + (i / (n.value - 1)) * plotW
+  if (n.value === 1) return padL + plotW / 2
+  // 两端各留半个柱宽，避免首末柱子贴边/溢出绘图区
+  const half = barW.value / 2
+  return padL + half + (i / (n.value - 1)) * (plotW - barW.value)
 }
 
 function niceMax(v) {
@@ -348,6 +392,38 @@ const xTicks = computed(() => {
   for (let i = 0; i < n.value; i += step) arr.push({ i, label: (daysList.value[i] || '').slice(5) })
   return arr
 })
+
+/* ===== 每日明细弹窗 ===== */
+const detailVisible = ref(false)
+const detailDate = ref('')
+const detailRows = ref([])
+
+const detailTitle = computed(() => (detailDate.value ? `${detailDate.value} 报工明细` : '报工明细'))
+
+const detailTotal = computed(() => {
+  let valid = 0
+  let waste = 0
+  let cnt = 0
+  for (const r of detailRows.value) {
+    valid += r.valid
+    waste += r.waste
+    cnt += r.cnt
+  }
+  const passRate = valid + waste > 0 ? Math.round((valid / (valid + waste)) * 1000) / 10 : 100
+  return { valid, waste, cnt, passRate }
+})
+
+function openDailyDetail(di) {
+  detailDate.value = daysList.value[di] || ''
+  // 各工序在该日（索引 di）的报工明细，按良品降序
+  detailRows.value = displayCrafts.value
+    .map((c) => {
+      const p = c.points[di] || {}
+      return { name: c.name, valid: p.valid || 0, waste: p.waste || 0, cnt: p.cnt || 0 }
+    })
+    .sort((a, b) => b.valid - a.valid)
+  detailVisible.value = true
+}
 
 /* ===== 颜色与图例 ===== */
 const COLORS = ['#007aff', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#84cc16']
@@ -616,6 +692,115 @@ onMounted(load)
   font-variant-numeric: tabular-nums;
 }
 
+/* 按日汇总：柱子可点击 */
+.bar-group {
+  cursor: pointer;
+}
+
+.bar-group rect {
+  transition: opacity 0.15s ease;
+}
+
+.bar-group:hover rect {
+  opacity: 0.75;
+}
+
+/* ===== 每日明细弹窗 ===== */
+.dd-summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.dd-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--muted, rgba(128, 128, 128, 0.06));
+}
+
+.dd-num {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.dd-label {
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.dd-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 52vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.dd-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dd-row + .dd-row {
+  border-top: 1px solid var(--border);
+}
+
+.dd-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.dd-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dd-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dd-meta {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.dd-valid {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.dd-empty {
+  padding: 20px 0;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+
 /* 图例 */
 .legend {
   display: flex;
@@ -783,6 +968,10 @@ onMounted(load)
     width: 32px;
     height: 32px;
     border-radius: 10px;
+  }
+
+  .dd-summary {
+    grid-template-columns: repeat(4, 1fr);
   }
 }
 </style>

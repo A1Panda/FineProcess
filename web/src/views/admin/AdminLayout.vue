@@ -95,6 +95,11 @@
               <span>报工统计</span>
             </el-menu-item>
           </el-sub-menu>
+          <!-- 全屏大屏：独立入口（真正全屏，无侧边栏/顶栏） -->
+          <el-menu-item index="/admin/fullscreen">
+            <el-icon><FullScreen /></el-icon>
+            <span>全屏大屏</span>
+          </el-menu-item>
         </el-menu>
       </aside>
 

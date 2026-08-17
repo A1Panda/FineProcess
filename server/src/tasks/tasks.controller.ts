@@ -142,6 +142,21 @@ export class TasksController {
     return this.tasks.getReportStats(days !== undefined ? Number(days) : 7);
   }
 
+  /** 管理员数据大屏：单工序多日报工（某加工单某工序近 N 天每日良品/废品/报工次数）。
+   *  参数：billCode、craftName（必填）、days（7~30，默认 7） */
+  @Get('craft-daily')
+  getCraftDaily(
+    @Query('billCode') billCode?: string,
+    @Query('craftName') craftName?: string,
+    @Query('days') days?: string,
+  ) {
+    return this.tasks.getCraftDaily(
+      billCode ?? '',
+      craftName ?? '',
+      days !== undefined ? Number(days) : 7,
+    );
+  }
+
   /** 管理员数据大屏：加工单进度列表（全量 + 每单工序进度 + 逾期/临期标记）。
    *  参数：status 多值（逗号分隔）、keyword、sortBy（delivery/progress/remaining）、overdue、dueSoon、
    *        scope（done-today=今日已完成）、page/pageSize */

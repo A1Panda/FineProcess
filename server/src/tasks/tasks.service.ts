@@ -157,6 +157,19 @@ export interface ReportStatsResult {
   generatedAt: string;
 }
 
+/** 单工序多日报工：某加工单某工序近 N 天每日良品/废品/报工次数 */
+export interface CraftDailyResult {
+  billCode: string;
+  craftName: string;
+  days: number;
+  startDate: string;
+  endDate: string;
+  daysList: string[];
+  points: CraftTrendPoint[];
+  totals: { valid: number; waste: number; cnt: number; passRate: number };
+  generatedAt: string;
+}
+
 /** 完工预测：工序明细（一道工序把整单数量做一遍 = 1 件次） */
 export interface BillForecastCraft {
   name: string;
@@ -1171,6 +1184,68 @@ export class TasksService {
     users.sort((a, b) => b.valid - a.valid);
 
     return { days: n, startDate: start, endDate: today, daily, crafts, users, generatedAt: new Date().toISOString() };
+  }
+
+  /**
+   * 管理员数据大屏：单工序多日报工（某加工单某工序近 N 天每日良品/废品/报工次数）。
+   * - days：统计天数（7~30，默认 7）
+   * - 数据取自 kgd_report_cache（bill_code + craft_name + report_time）
+   */
+  async getCraftDaily(billCode: string, craftName: string, days = 7): Promise<CraftDailyResult> {
+    const n = Math.min(30, Math.max(7, Number(days) || 7));
+    const today = fmtToday();
+    const start = this.daysAhead(today, -(n - 1));
+    const rows = (await this.reportCache
+      .createQueryBuilder('r')
+      .select('SUBSTRING(r.report_time, 1, 10)', 'day')
+      .addSelect('SUM(CAST(r.valid_num AS DECIMAL(20,2)))', 'valid')
+      .addSelect('SUM(CAST(r.waste_num AS DECIMAL(20,2)))', 'waste')
+      .addSelect('COUNT(*)', 'cnt')
+      .where("r.bill_code = :billCode AND r.craft_name = :craftName AND r.report_time <> '' AND r.report_time >= :start AND r.report_time < :end", {
+        billCode,
+        craftName,
+        start: `${start} 00:00:00`,
+        end: `${this.daysAhead(today, 1)} 00:00:00`,
+      })
+      .groupBy('SUBSTRING(r.report_time, 1, 10)')
+      .getRawMany()) as Array<{ day: string; valid: string; waste: string; cnt: string }>;
+
+    const byDay = new Map<string, CraftTrendPoint>();
+    for (const r of rows) {
+      byDay.set(r.day, {
+        date: r.day,
+        valid: Number(r.valid) || 0,
+        waste: Number(r.waste) || 0,
+        cnt: Number(r.cnt) || 0,
+      });
+    }
+
+    const daysList: string[] = [];
+    let valid = 0;
+    let waste = 0;
+    let cnt = 0;
+    const points: CraftTrendPoint[] = [];
+    for (let i = 0; i < n; i++) {
+      const date = this.daysAhead(start, i);
+      daysList.push(date);
+      const p = byDay.get(date) ?? { date, valid: 0, waste: 0, cnt: 0 };
+      valid += p.valid;
+      waste += p.waste;
+      cnt += p.cnt;
+      points.push(p);
+    }
+    const total = valid + waste;
+    return {
+      billCode,
+      craftName,
+      days: n,
+      startDate: start,
+      endDate: today,
+      daysList,
+      points,
+      totals: { valid, waste, cnt, passRate: total > 0 ? Math.round((valid / total) * 1000) / 10 : 100 },
+      generatedAt: new Date().toISOString(),
+    };
   }
 
   /**

@@ -32,7 +32,7 @@
 
     <div class="nums">
       <span class="num-item">计划 <b class="strong">{{ task.num }}</b><span class="unit">{{ task.unitName }}</span></span>
-      <span v-if="isTerminal" class="num-item">进行到 <b class="status-name" :style="{ color: statusNameColor }">{{ currentCraftName }}</b></span>
+      <span v-if="isTerminal || isBiancheng" class="num-item">进行到: <b class="status-name" :style="{ color: statusNameColor }">{{ statusText }}</b></span>
       <template v-else>
         <span class="num-item">良品 <b class="ok">{{ task.validNum }}</b></span>
         <span class="num-item">不良 <b class="bad">{{ task.wasteNum }}</b></span>
@@ -164,6 +164,8 @@ async function saveTargetDate() {
 
 /** 已终结任务（已完成/已取消等）：无操作按钮，数量区显示当前状态 */
 const isTerminal = computed(() => !['未开始', '进行中', '已暂停'].includes(props.task?.statusName))
+/** 编程工作台卡片（CraftWorkbench 编程工序传入 mode）：数量区只显示"进行到"当前工序 */
+const isBiancheng = computed(() => !!props.mode)
 const goodsTitle = computed(() => {
   const spec = props.task?.spec
   return spec ? `${props.task?.goodsName ?? ''}｜${spec}` : (props.task?.goodsName ?? '')
@@ -213,6 +215,14 @@ const currentCraftName = computed(() => {
   return started[started.length - 1]?.craftName || '未开始'
 })
 
+/** 数量区"进行到"文案：编程页按加工单状态显示（未开始=未编程 / 进行中=编程中），其余场景显示当前工序 */
+const statusText = computed(() => {
+  if (!isBiancheng.value) return currentCraftName.value
+  if (props.task?.statusName === '未开始') return '未编程'
+  if (props.task?.statusName === '进行中') return '编程中'
+  return currentCraftName.value
+})
+
 /** 每种工序固定色板（按工序顺序取色）：每种工序颜色不同；未开始用淡色版，已开始用饱和色 */
 const CRAFT_COLORS = ['#4e8cff', '#00b578', '#ff9f0a', '#ff5a5f', '#8e5cff', '#00b8d9', '#e44c8f', '#5a7d9a']
 /** 已开始（进行到这一步）= 有报工记录（良品或不良数 > 0）；仅开工未报工不算 */
@@ -224,10 +234,10 @@ const nameStyle = (c, i) => ({
   fontWeight: isStarted(c) ? 500 : 400,
 })
 
-/** "进行到"工序名的颜色：与进度条中该工序对应的颜色一致；"未开始"用灰色 */
+/** "进行到"文案的颜色：与进度条中该工序对应的颜色一致；"未开始/未编程"用灰色 */
 const statusNameColor = computed(() => {
-  const name = currentCraftName.value
-  if (name === '未开始') return 'var(--muted-foreground)'
+  const name = statusText.value
+  if (name === '未开始' || name === '未编程') return 'var(--muted-foreground)'
   const idx = (props.task?.craftProgress ?? []).findIndex((c) => c.craftName === name)
   return idx >= 0 ? CRAFT_COLORS[idx % CRAFT_COLORS.length] : 'var(--success)'
 })

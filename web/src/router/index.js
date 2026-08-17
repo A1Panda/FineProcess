@@ -9,6 +9,7 @@ import AdminDataReportStats from '../views/admin/datascreen/ReportStats.vue'
 import AdminDataBillProgress from '../views/admin/datascreen/BillProgress.vue'
 import AdminDataCraftTrend from '../views/admin/datascreen/CraftTrend.vue'
 import AdminDataBillForecast from '../views/admin/datascreen/BillForecast.vue'
+import AdminFullScreen from '../views/admin/datascreen/FullScreen.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -32,6 +33,13 @@ const router = createRouter({
         { path: 'data/craft-trend', name: 'admin-data-craft-trend', component: AdminDataCraftTrend, meta: { title: '工序产出趋势' } },
         { path: 'data/bill-forecast', name: 'admin-data-bill-forecast', component: AdminDataBillForecast, meta: { title: '完工预测' } },
       ],
+    },
+    // 全屏大屏：真正全屏（无侧边栏/顶栏），聚合核心数据，适配电脑大屏
+    {
+      path: '/admin/fullscreen',
+      name: 'admin-fullscreen',
+      component: AdminFullScreen,
+      meta: { requiresAuth: true, adminOrMgr: true, title: '全屏大屏' },
     },
   ],
 })

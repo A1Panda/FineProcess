@@ -102,12 +102,12 @@
 
             <!-- 展开：工序明细（两行布局：信息行 + 进度条） -->
             <div v-if="expanded.includes(b.code)" class="bc-crafts">
-              <div class="craft-row" v-for="(c, i) in b.crafts" :key="i">
+              <div class="craft-row" v-for="(c, i) in b.crafts" :key="i" @click="openCraftDaily(b, c)">
                 <div class="cr-line1">
                   <span class="cr-name">{{ c.craftName }}</span>
                   <span class="cr-tag" :class="craftStatusClass(c.status)">{{ c.statusName }}</span>
                   <span class="cr-num">
-                    良 {{ c.validNum }}/{{ c.num }}<span v-if="c.wasteNum > 0"> · 废 {{ c.wasteNum }}</span>
+                    计划 {{ c.num }} · 良 {{ c.validNum }} · 剩 {{ Math.max(0, c.num - c.validNum) }}<span v-if="c.wasteNum > 0"> · 废 {{ c.wasteNum }}</span>
                   </span>
                 </div>
                 <el-progress
@@ -138,6 +138,104 @@
       <span v-else-if="loadingMore">加载中…</span>
       <span v-else>上滑加载更多</span>
     </div>
+
+    <!-- 单工序多日报工弹窗 -->
+    <el-dialog
+      v-model="dailyVisible"
+      width="92%"
+      :style="{ maxWidth: '560px' }"
+      align-center
+      append-to-body
+      destroy-on-close
+    >
+      <template #header>
+        <div class="cd-header">
+          <span class="cd-title">多日报工</span>
+          <span class="cd-sub">{{ dailyCraft }}</span>
+        </div>
+      </template>
+
+      <div v-if="dailyLoading" class="cd-loading">加载中…</div>
+      <template v-else>
+        <!-- 汇总条 -->
+        <div class="cd-summary">
+          <div class="cd-stat">
+            <span class="cd-num" style="color: var(--primary)">{{ fmtNum(dailyTotals.valid) }}</span>
+            <span class="cd-label">良品（件）</span>
+          </div>
+          <div class="cd-stat">
+            <span class="cd-num" style="color: #ef4444">{{ fmtNum(dailyTotals.waste) }}</span>
+            <span class="cd-label">废品（件）</span>
+          </div>
+          <div class="cd-stat">
+            <span class="cd-num">{{ fmtNum(dailyTotals.cnt) }}</span>
+            <span class="cd-label">报工次数</span>
+          </div>
+          <div class="cd-stat">
+            <span class="cd-num" style="color: #10b981">{{ dailyTotals.passRate }}%</span>
+            <span class="cd-label">合格率</span>
+          </div>
+        </div>
+
+        <!-- 多日堆叠柱（横向条形图 + 上下滑动） -->
+        <div ref="cdChartRef" class="cd-chart">
+          <svg
+            class="cd-svg"
+            :viewBox="`0 0 ${cdW} ${cdH}`"
+            :style="{ height: cdH + 'px' }"
+            preserveAspectRatio="xMidYMid meet"
+          >
+            <defs>
+              <linearGradient id="cd-valid-grad" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stop-color="#007aff" />
+                <stop offset="100%" stop-color="#007aff" stop-opacity="0.4" />
+              </linearGradient>
+            </defs>
+            <!-- 数量刻度（垂直网格线 + 顶部数值） -->
+            <g v-for="(gv, gi) in cdGrid" :key="gi">
+              <line :x1="gv.x" :x2="gv.x" :y1="cdPadT" :y2="cdPadT + cdPlotH" class="cd-grid-line" />
+              <text :x="gv.x" :y="cdPadT - 5" class="cd-axis-text" text-anchor="middle">{{ fmtNum(gv.label) }}</text>
+            </g>
+            <!-- 每天一行：日期 + 横条（良品+废品堆叠） + 数值 -->
+            <g v-for="(d, di) in cdBars" :key="di">
+              <title>{{ d.date }}：良品 {{ fmtNum(d.valid) }} 件 · 废品 {{ fmtNum(d.waste) }} 件 · 报工 {{ d.cnt }} 次</title>
+              <text :x="cdPadL - 8" :y="cdYAt(di)" class="cd-axis-text" text-anchor="end">{{ (d.date || '').slice(5) }}</text>
+              <rect :x="cdPadL" :y="cdYAt(di) - cdBarH / 2" :width="cdBarLen(d.valid)" :height="cdBarH" rx="4" fill="url(#cd-valid-grad)" />
+              <rect
+                v-if="d.waste > 0"
+                :x="cdPadL + cdBarLen(d.valid)"
+                :y="cdYAt(di) - cdBarH / 2"
+                :width="cdBarLen(d.waste)"
+                :height="cdBarH"
+                rx="4"
+                fill="#ef4444"
+                opacity="0.85"
+              />
+              <!-- 良品数：统一居中显示在蓝色段正上方（含短柱） -->
+              <text
+                v-if="d.valid > 0"
+                :x="cdLabelX(cdPadL + cdBarLen(d.valid) / 2)"
+                :y="cdYAt(di) - cdBarH / 2 - 5"
+                class="cd-valid-label"
+                text-anchor="middle"
+              >{{ fmtNum(d.valid) }}</text>
+              <!-- 废品数：统一居中显示在红色段正上方（含短柱） -->
+              <text
+                v-if="d.waste > 0"
+                :x="cdLabelX(cdPadL + cdBarLen(d.valid) + cdBarLen(d.waste) / 2)"
+                :y="cdYAt(di) - cdBarH / 2 - 5"
+                class="cd-waste-label"
+                text-anchor="middle"
+              >{{ fmtNum(d.waste) }}</text>
+            </g>
+          </svg>
+        </div>
+        <div class="cd-legend">
+          <span class="cd-legend-item"><span class="cd-legend-dot" style="background: #007aff"></span>良品</span>
+          <span class="cd-legend-item"><span class="cd-legend-dot" style="background: #ef4444"></span>废品</span>
+        </div>
+      </template>
+    </el-dialog>
   </section>
 </template>
 
@@ -259,6 +357,7 @@ async function loadMore() {
 
 onUnmounted(() => {
   moreObserver?.disconnect()
+  cdResizeObs?.disconnect()
 })
 
 function switchStatus(v) {
@@ -332,6 +431,121 @@ async function refreshData() {
 }
 
 /* ===== 展示辅助 ===== */
+
+/** 数字格式化：整数直接显示，带小数的保留 1 位 */
+function fmtNum(v) {
+  const n = Number(v) || 0
+  return Number.isInteger(n) ? n.toLocaleString('en-US') : n.toFixed(1)
+}
+
+/* ===== 单工序多日报工弹窗 ===== */
+const dailyVisible = ref(false)
+const dailyLoading = ref(false)
+const dailyCraft = ref('')
+const dailyBillCode = ref('')
+const dailyDays = ref([])
+const dailyPoints = ref([])
+const dailyTotals = ref({ valid: 0, waste: 0, cnt: 0, passRate: 100 })
+
+// SVG 布局常量（横向条形图：每天一行，高度随天数增长，超高时上下滑动）
+const cdRowH = 52 // 每天占用的行高（留出横条上方的数字空间）
+const cdBarH = 20 // 横条高度
+const cdPadT = 24 // 顶部留白（容纳数量刻度）
+const cdPadB = 10 // 底部留白
+const cdPadL = 54 // 左侧日期标签留白
+const cdPadR = 44 // 右侧数值标签留白
+const cdN = computed(() => dailyDays.value.length || 1)
+const cdH = computed(() => cdPadT + cdPadB + cdN.value * cdRowH)
+const cdPlotH = computed(() => cdN.value * cdRowH)
+
+// 动态测量容器实际宽度：让 viewBox 宽度 1:1 对应 CSS 像素，避免字体被整体缩放变小
+const cdChartRef = ref(null)
+const chartW = ref(640)
+const cdW = computed(() => chartW.value)
+const cdPlotW = computed(() => Math.max(120, cdW.value - cdPadL - cdPadR))
+let cdResizeObs = null
+
+watch(
+  cdChartRef,
+  (el) => {
+    cdResizeObs?.disconnect()
+    cdResizeObs = null
+    if (!el) return
+    const measure = () => {
+      chartW.value = Math.max(280, el.clientWidth)
+    }
+    measure()
+    cdResizeObs = new ResizeObserver(measure)
+    cdResizeObs.observe(el)
+  },
+  { flush: 'post' },
+)
+
+/** 第 i 天横条的纵向中心坐标 */
+function cdYAt(i) {
+  return cdPadT + cdRowH * i + cdRowH / 2
+}
+
+/** 数量 → 横条长度（像素） */
+function cdBarLen(v) {
+  return (cdPlotW.value * v) / cdYMax.value
+}
+
+/** 数字水平坐标：尽量居中于段上方，同时保证不超出图表左右边界 */
+function cdLabelX(x) {
+  return Math.max(cdPadL, Math.min(cdW.value - cdPadR, x))
+}
+
+/** 数量轴最大值：取每日良品+废品堆叠最大值，向上取整到漂亮刻度 */
+function cdNiceMax(m) {
+  if (m <= 0) return 10
+  const mag = Math.pow(10, Math.floor(Math.log10(m)))
+  const norm = m / mag
+  const step = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10
+  return step * mag
+}
+
+const cdYMax = computed(() => {
+  let m = 0
+  for (const p of dailyPoints.value) m = Math.max(m, (p.valid || 0) + (p.waste || 0))
+  return cdNiceMax(m)
+})
+
+/** 数量刻度：垂直网格线 + 顶部数值标签 */
+const cdGrid = computed(() => {
+  const arr = []
+  const count = 4
+  for (let i = 0; i <= count; i++) {
+    const v = (cdYMax.value / count) * i
+    arr.push({ x: cdPadL + (cdPlotW.value * v) / cdYMax.value, label: v })
+  }
+  return arr
+})
+
+/** 每天一条横条：最新日期排在最前面（倒序） */
+const cdBars = computed(() => [...dailyPoints.value].reverse())
+
+async function openCraftDaily(b, c) {
+  dailyCraft.value = `${c.craftName} · ${b.code}`
+  dailyBillCode.value = b.code
+  dailyVisible.value = true
+  dailyLoading.value = true
+  dailyPoints.value = []
+  dailyDays.value = []
+  dailyTotals.value = { valid: 0, waste: 0, cnt: 0, passRate: 100 }
+  try {
+    const data = await api.get('/tasks/craft-daily', {
+      params: { billCode: b.code, craftName: c.craftName, days: 7 },
+    })
+    dailyDays.value = data.daysList || []
+    dailyPoints.value = data.points || []
+    dailyTotals.value = data.totals || { valid: 0, waste: 0, cnt: 0, passRate: 100 }
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    dailyLoading.value = false
+  }
+}
 
 /** 加工单状态 tag：1 未开始 / 2 进行中 / 3 已完成 / 4 已取消 / 5 已暂停 */
 function statusClass(s) {
@@ -785,6 +999,13 @@ watch(keyword, () => {
 
 .craft-row {
   padding: 8px 0;
+  cursor: pointer;
+  border-radius: 10px;
+  transition: background 0.15s ease;
+}
+
+.craft-row:hover {
+  background: var(--muted, rgba(128, 128, 128, 0.06));
 }
 
 .cr-line1 {
@@ -883,6 +1104,130 @@ watch(keyword, () => {
 
 @keyframes lm-spin {
   to { transform: rotate(360deg); }
+}
+
+/* ===== 单工序多日报工弹窗 ===== */
+.cd-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cd-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.cd-sub {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cd-loading {
+  text-align: center;
+  color: var(--muted-foreground);
+  padding: 24px 0;
+  font-size: 13px;
+}
+
+.cd-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.cd-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--muted, rgba(128, 128, 128, 0.06));
+}
+
+.cd-num {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.cd-label {
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.cd-chart {
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  max-height: 320px;
+  margin: 0 -2px;
+  padding: 2px 2px 6px;
+}
+
+.cd-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.cd-grid-line {
+  stroke: var(--border);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.cd-axis-text {
+  font-size: 12px;
+  fill: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 良品数：蓝色，加粗 */
+.cd-valid-label {
+  font-size: 12px;
+  font-weight: 600;
+  fill: #007aff;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 废品数：红色，加粗 */
+.cd-waste-label {
+  font-size: 12px;
+  font-weight: 600;
+  fill: #ef4444;
+  font-variant-numeric: tabular-nums;
+}
+
+.cd-legend {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 6px;
+}
+
+.cd-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.cd-legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
 }
 
 /* ===== 桌面端 ===== */
