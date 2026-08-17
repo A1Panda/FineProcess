@@ -154,7 +154,7 @@
             v-for="b in bills"
             :key="b.code"
             class="fs-bill"
-            :class="{ 'is-overdue': b.overdue, 'is-today': b.todayReport }"
+            :class="{ 'is-overdue': b.overdue, 'is-today': b.todayReport, 'is-unprog': b.status === 1 }"
           >
             <div class="fs-bill-top">
               <span class="fs-bill-code">{{ b.goodsName || '—' }}</span>
@@ -337,9 +337,10 @@ async function load() {
       api.get('/tasks/recent-reports', { params: { today: 1 } }),
     ])
     Object.assign(bpStats, bp.stats || {})
-    // 今日报工优先排序由后端 latestReport 完成；这里补充今日标识，不再覆盖排序
+    // 未编程单置顶（最需要处理），其余保持后端 latestReport 顺序（今日报工优先）
     const t = todayStr()
-    bills.value = (bp.list || []).map((b) => ({
+    const bpList = [...(bp.list || [])].sort((a, b) => Number(a.status === 1) - Number(b.status === 1))
+    bills.value = bpList.map((b) => ({
       ...b,
       todayReport: (b.lastReportTime || '').slice(0, 10) === t,
       reportTimeText: (b.lastReportTime || '').slice(11, 16),
@@ -482,6 +483,7 @@ async function refreshData() {
 function billLabel(b) {
   if (b.overdue) return '逾期'
   if (b.dueSoon) return '临期'
+  if (b.status === 1) return '未编程'
   return b.statusName || ''
 }
 function billCls(b) {
@@ -1220,6 +1222,13 @@ onUnmounted(() => {
 
 .fs-bill.is-overdue {
   border-color: rgba(255, 59, 48, 0.4);
+}
+
+/* 未编程：灰色虚线边框 + 淡灰底，与进行中区分 */
+.fs-bill.is-unprog {
+  border-style: dashed;
+  border-color: rgba(128, 128, 128, 0.45);
+  background: rgba(128, 128, 128, 0.05);
 }
 
 /* 今日有报工的加工单：蓝色高亮边框 + 淡蓝底 */
