@@ -154,7 +154,7 @@
             v-for="b in bills"
             :key="b.code"
             class="fs-bill"
-            :class="{ 'is-overdue': b.overdue, 'is-today': b.todayReport, 'is-unprog': b.status === 1 }"
+            :class="{ 'is-overdue': b.overdue, 'is-today': b.todayReport, 'is-unprog': b.status === 1, 'is-paused': b.status === 5 }"
           >
             <div class="fs-bill-top">
               <span class="fs-bill-code">{{ b.goodsName || '—' }}</span>
@@ -331,15 +331,16 @@ async function load() {
   loading.value = true
   try {
     const [bp, ct, rs, rr] = await Promise.all([
-      api.get('/tasks/bill-progress', { params: { page: 1, pageSize: 60, status: '1,2', sortBy: 'latestReport' } }),
+      api.get('/tasks/bill-progress', { params: { page: 1, pageSize: 60, status: '1,2,5', sortBy: 'latestReport' } }),
       api.get('/tasks/craft-trend', { params: { days: 7 } }),
       api.get('/tasks/report-stats', { params: { days: 7 } }),
       api.get('/tasks/recent-reports', { params: { today: 1 } }),
     ])
     Object.assign(bpStats, bp.stats || {})
-    // 未编程单置顶（最需要处理），其余保持后端 latestReport 顺序（今日报工优先）
+    // 排序：正常进行中的单在前（今日报工优先），未编程/已暂停排最底
     const t = todayStr()
-    const bpList = [...(bp.list || [])].sort((a, b) => Number(a.status === 1) - Number(b.status === 1))
+    const rank = (s) => (s === 1 || s === 5 ? 1 : 0)
+    const bpList = [...(bp.list || [])].sort((a, b) => rank(a.status) - rank(b.status))
     bills.value = bpList.map((b) => ({
       ...b,
       todayReport: (b.lastReportTime || '').slice(0, 10) === t,
@@ -484,12 +485,14 @@ function billLabel(b) {
   if (b.overdue) return '逾期'
   if (b.dueSoon) return '临期'
   if (b.status === 1) return '未编程'
+  if (b.status === 5) return '已暂停'
   return b.statusName || ''
 }
 function billCls(b) {
   if (b.overdue) return 'is-red'
   if (b.dueSoon) return 'is-orange'
   if (b.status === 1) return 'is-gray'
+  if (b.status === 5) return 'is-paused'
   return 'is-blue'
 }
 
@@ -1231,6 +1234,13 @@ onUnmounted(() => {
   background: rgba(128, 128, 128, 0.05);
 }
 
+/* 已暂停：橙色虚线边框 + 淡橙底 */
+.fs-bill.is-paused {
+  border-style: dashed;
+  border-color: rgba(255, 149, 0, 0.5);
+  background: rgba(255, 149, 0, 0.08);
+}
+
 /* 今日有报工的加工单：蓝色高亮边框 + 淡蓝底 */
 .fs-bill.is-today {
   border-color: rgba(0, 122, 255, 0.45);
@@ -1279,6 +1289,11 @@ onUnmounted(() => {
 .fs-bill-tag.is-gray {
   background: var(--muted);
   color: var(--muted-foreground);
+}
+
+.fs-bill-tag.is-paused {
+  background: rgba(255, 149, 0, 0.14);
+  color: var(--warning);
 }
 
 .fs-bill-sub {
