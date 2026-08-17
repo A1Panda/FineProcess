@@ -51,7 +51,9 @@
       >
         <span class="p-name" :style="nameStyle(c, i)" :title="c.statusName">{{ c.craftName }}</span>
         <div class="p-bar"><div class="p-fill" :style="fillStyle(c, i)" /></div>
-        <span class="p-pct">{{ pct(c) }}%</span>
+        <span class="p-pct">
+          <b class="p-ok">良品：{{ c.validNum || 0 }}</b><b class="p-slash">/</b><b class="p-remain">剩余：{{ remainOf(c) }}</b>
+        </span>
       </div>
     </div>
 
@@ -241,16 +243,26 @@ const statusNameColor = computed(() => {
   const idx = (props.task?.craftProgress ?? []).findIndex((c) => c.craftName === name)
   return idx >= 0 ? CRAFT_COLORS[idx % CRAFT_COLORS.length] : 'var(--success)'
 })
-const fillStyle = (c, i) => ({
-  width: pct(c) + '%',
-  background: craftColor(c, i),
-  opacity: isStarted(c) ? 0.9 : 0.25,
-})
+const fillStyle = (c, i) => {
+  const done = Number(c?.validNum) || 0
+  const total = done + remainOf(c)
+  const w = total > 0 ? Math.round((done / total) * 100) : 0
+  return {
+    width: w + '%',
+    background: craftColor(c, i),
+    opacity: isStarted(c) ? 0.9 : 0.25,
+  }
+}
 
 /** 完成百分比（0-100，后端已限制上限，这里兜底防越界） */
 function pct(c) {
   const v = Number(c?.percent) || 0
   return Math.max(0, Math.min(100, v))
+}
+
+/** 剩余数量 = 计划数 - 良品数（不考虑不良，下限 0） */
+function remainOf(c) {
+  return Math.max(0, (Number(c?.num) || 0) - (Number(c?.validNum) || 0))
 }
 
 const pillClass = computed(() => {
@@ -651,11 +663,29 @@ function copyCode() {
 }
 
 .p-pct {
-  width: 38px;
   flex-shrink: 0;
   text-align: right;
+  font-size: 11px;
+  line-height: 1.2;
   font-variant-numeric: tabular-nums;
   color: var(--muted-foreground);
+  white-space: nowrap;
+  display: inline-flex;
+  gap: 3px;
+  justify-content: flex-end;
+}
+.p-pct .p-ok {
+  color: var(--primary);
+  font-weight: 600;
+}
+.p-pct .p-slash {
+  color: var(--muted-foreground);
+  opacity: 0.6;
+  font-weight: 400;
+}
+.p-pct .p-remain {
+  color: #f59e0b;
+  font-weight: 600;
 }
 
 .p-row.current .p-pct {
