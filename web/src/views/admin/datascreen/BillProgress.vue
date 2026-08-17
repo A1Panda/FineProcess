@@ -212,21 +212,20 @@
                 fill="#ef4444"
                 opacity="0.85"
               />
-              <!-- 良品数：统一居中显示在蓝色段正上方（含短柱） -->
+              <!-- 数字统一显示在横条右侧：良品（蓝）在前，废品（红）在后，垂直居中 -->
               <text
                 v-if="d.valid > 0"
-                :x="cdLabelX(cdPadL + cdBarLen(d.valid) / 2)"
-                :y="cdYAt(di) - cdBarH / 2 - 5"
+                :x="cdBarEndX(d) + 8"
+                :y="cdYAt(di) + 4"
                 class="cd-valid-label"
-                text-anchor="middle"
+                text-anchor="start"
               >{{ fmtNum(d.valid) }}</text>
-              <!-- 废品数：统一居中显示在红色段正上方（含短柱） -->
               <text
                 v-if="d.waste > 0"
-                :x="cdLabelX(cdPadL + cdBarLen(d.valid) + cdBarLen(d.waste) / 2)"
-                :y="cdYAt(di) - cdBarH / 2 - 5"
+                :x="cdBarEndX(d) + 8 + cdTextW(d.valid) + 10"
+                :y="cdYAt(di) + 4"
                 class="cd-waste-label"
-                text-anchor="middle"
+                text-anchor="start"
               >{{ fmtNum(d.waste) }}</text>
             </g>
           </svg>
@@ -487,7 +486,7 @@ const cdBarH = 20 // 横条高度
 const cdPadT = 24 // 顶部留白（容纳数量刻度）
 const cdPadB = 10 // 底部留白
 const cdPadL = 54 // 左侧日期标签留白
-const cdPadR = 44 // 右侧数值标签留白
+const cdPadR = 76 // 右侧留白（容纳良品+废品数字）
 const cdN = computed(() => dailyDays.value.length || 1)
 const cdH = computed(() => cdPadT + cdPadB + cdN.value * cdRowH)
 const cdPlotH = computed(() => cdN.value * cdRowH)
@@ -525,9 +524,14 @@ function cdBarLen(v) {
   return (cdPlotW.value * v) / cdYMax.value
 }
 
-/** 数字水平坐标：尽量居中于段上方，同时保证不超出图表左右边界 */
-function cdLabelX(x) {
-  return Math.max(cdPadL, Math.min(cdW.value - cdPadR, x))
+/** 横条右端 x 坐标（良品+废品总长末端），右侧统一放数字 */
+function cdBarEndX(d) {
+  return cdPadL + cdBarLen((d.valid || 0) + (d.waste || 0))
+}
+
+/** 数字文本估算宽度（等宽数字），用于并排定位废品数 */
+function cdTextW(v) {
+  return String(fmtNum(v || 0)).length * 7.5
 }
 
 /** 数量轴最大值：取每日良品+废品堆叠最大值，向上取整到漂亮刻度 */

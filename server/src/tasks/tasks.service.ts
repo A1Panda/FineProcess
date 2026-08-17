@@ -134,7 +134,7 @@ export interface ReportStatsCraft {
   lines: ReportStatsLine[];
 }
 
-/** 报工统计：按报工人汇总行（含所属产线/分组） */
+/** 报工统计：按报工人汇总行（含所属产线/分组 + 窗口内每日明细） */
 export interface ReportStatsRow {
   name: string;
   /** 报工人所属产线/分组（department_path_names，查不到为 未分组） */
@@ -144,6 +144,8 @@ export interface ReportStatsRow {
   cnt: number;
   /** 一次合格率（良品/(良品+废品)，无废品数据为 100） */
   passRate: number;
+  /** 窗口内每日报工明细（补齐每一天，无报工为 0，日期升序） */
+  days: ReportStatsDay[];
 }
 
 /** 报工统计：近 N 天按日/按工序（含产线）/按报工人汇总 */
@@ -1141,7 +1143,9 @@ export class TasksService {
 
     const dayMap = new Map<string, ReportStatsDay>();
     const craftMap = new Map<string, ReportStatsCraft>();
+    /** 报工人 → 汇总行；days 按日期收集（后续补齐窗口内每一天） */
     const userMap = new Map<string, ReportStatsRow>();
+    const userDayMap = new Map<string, Map<string, ReportStatsDay>>();
 
     // 报工人 → 产线/分组（users.department_path_names，如 生产部/南线），查不到归 未分组
     const userRows = await this.users.find({ select: { name: true, departmentPathNames: true } });
@@ -1182,11 +1186,24 @@ export class TasksService {
       ln.waste += waste;
       ln.cnt += cnt;
       const uname = r.userName || '未署名';
-      const u = userMap.get(uname) ?? { name: uname, line: lineOf.get(uname) || '未分组', valid: 0, waste: 0, cnt: 0, passRate: 100 };
+      const u = userMap.get(uname) ?? { name: uname, line: lineOf.get(uname) || '未分组', valid: 0, waste: 0, cnt: 0, passRate: 100, days: [] };
       u.valid += valid;
       u.waste += waste;
       u.cnt += cnt;
       userMap.set(uname, u);
+      // 收集该人每日明细
+      if (d) {
+        let udays = userDayMap.get(uname);
+        if (!udays) {
+          udays = new Map<string, ReportStatsDay>();
+          userDayMap.set(uname, udays);
+        }
+        const ud = udays.get(d) ?? { date: d, valid: 0, waste: 0, cnt: 0 };
+        ud.valid += valid;
+        ud.waste += waste;
+        ud.cnt += cnt;
+        udays.set(d, ud);
+      }
     }
 
     const pass = (v: number, w: number) => (v + w > 0 ? Math.round((v / (v + w)) * 1000) / 10 : 100);
@@ -1207,7 +1224,16 @@ export class TasksService {
     }));
     crafts.sort((a, b) => b.valid - a.valid);
 
-    const users = [...userMap.values()].map((u) => ({ ...u, passRate: pass(u.valid, u.waste) }));
+    const users = [...userMap.values()].map((u) => {
+      const udays = userDayMap.get(u.name);
+      // 补齐窗口内每一天（无报工为 0），返回给前端做"每日每人"视图
+      const days: ReportStatsDay[] = [];
+      for (let i = 0; i < n; i++) {
+        const date = this.daysAhead(start, i);
+        days.push(udays?.get(date) ?? { date, valid: 0, waste: 0, cnt: 0 });
+      }
+      return { ...u, passRate: pass(u.valid, u.waste), days };
+    });
     users.sort((a, b) => b.valid - a.valid);
 
     return { days: n, startDate: start, endDate: today, daily, crafts, users, generatedAt: new Date().toISOString() };

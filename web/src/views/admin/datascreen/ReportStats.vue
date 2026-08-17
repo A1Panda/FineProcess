@@ -37,10 +37,12 @@
           {{ r.label }}
         </button>
       </div>
-      <span class="range-text">{{ raw.startDate }} ~ {{ raw.endDate }}</span>
-      <button class="refresh-btn" :class="{ spinning: refreshing }" aria-label="刷新数据" @click="refreshData">
-        <el-icon :size="16"><Refresh /></el-icon>
-      </button>
+      <div class="toolbar-right">
+        <span class="range-text">{{ raw.startDate }} ~ {{ raw.endDate }}</span>
+        <button class="refresh-btn" :class="{ spinning: refreshing }" aria-label="刷新数据" @click="refreshData">
+          <el-icon :size="16"><Refresh /></el-icon>
+        </button>
+      </div>
     </div>
 
     <div v-loading="loading" class="charts">
@@ -58,14 +60,16 @@
                 <span class="rs-dot" :style="{ background: colorOf(ci) }"></span>
                 <span class="rs-name">{{ c.name }}</span>
                 <span class="rs-valid">{{ fmt(c.valid) }} 件</span>
-                <span class="rs-craft-meta">废品 {{ fmt(c.waste) }} · 报工 {{ c.cnt }} 次</span>
               </button>
+              <div class="rs-craft-meta">废品 {{ fmt(c.waste) }} · 报工 {{ c.cnt }} 次</div>
               <div v-if="openSet.has(c.name)" class="rs-lines">
                 <div v-for="(l, li) in c.lines" :key="l.line" class="rs-line">
-                  <span class="rs-line-name">{{ l.line }}</span>
-                  <span class="rs-line-valid">{{ fmt(l.valid) }} 件</span>
-                  <span class="rs-line-meta">废品 {{ fmt(l.waste) }} · 报工 {{ l.cnt }} 次</span>
-                  <span class="rs-line-rate" :style="{ color: passColor(l.passRate) }">{{ l.passRate }}%</span>
+                  <div class="rs-line-top">
+                    <span class="rs-line-name">{{ l.line }}</span>
+                    <span class="rs-line-valid">{{ fmt(l.valid) }} 件</span>
+                    <span class="rs-line-rate" :style="{ color: passColor(l.passRate) }">{{ l.passRate }}%</span>
+                  </div>
+                  <div class="rs-line-meta">废品 {{ fmt(l.waste) }} · 报工 {{ l.cnt }} 次</div>
                   <el-progress
                     class="rs-line-bar"
                     :percentage="l.passRate"
@@ -99,18 +103,37 @@
           <div class="rs-list">
             <div v-for="(g, gi) in userGroups" :key="g.line" class="rs-group">
               <div class="rs-group-head" :class="{ 'rs-group-misc': g.misc }">
-                <span class="rs-group-name">{{ g.line }}</span>
-                <span class="rs-group-meta">{{ g.members.length }} 人 · 报工 {{ g.cnt }} 次</span>
-                <span class="rs-group-valid">{{ fmt(g.valid) }} 件</span>
-                <span class="rs-group-rate" :style="{ color: passColor(g.passRate) }">{{ g.passRate }}%</span>
+                <div class="rs-group-top">
+                  <span class="rs-group-name">{{ g.line }}</span>
+                  <span class="rs-group-valid">{{ fmt(g.valid) }} 件</span>
+                  <span class="rs-group-rate" :style="{ color: passColor(g.passRate) }">{{ g.passRate }}%</span>
+                </div>
+                <div class="rs-group-meta">{{ g.members.length }} 人 · 报工 {{ g.cnt }} 次</div>
               </div>
               <div class="rs-group-body">
-                <div v-for="(u, ui) in g.members" :key="u.name" class="rs-row">
+                <div v-for="(u, ui) in g.members" :key="u.name" class="rs-row" @click="openUserDaily(u, g)">
                   <div class="rs-line1">
                     <span class="rs-rank" :class="rankClass(ui)">{{ ui + 1 }}</span>
                     <span class="rs-name">{{ u.name }}</span>
                     <span v-if="u.line && !g.misc" class="rs-u-line">{{ u.line }}</span>
                     <span class="rs-valid">{{ fmt(u.valid) }} 件</span>
+                  </div>
+                  <!-- 每日报工迷你柱：良品（蓝）上叠废品（红），悬浮看每日明细，点击看日报 -->
+                  <div v-if="u.days && u.days.length" class="rs-user-bars">
+                    <div
+                      v-for="(d, di) in u.days"
+                      :key="di"
+                      class="rs-ub-col"
+                      :title="`${d.date.slice(5)}：良 ${fmt(d.valid)} · 废 ${fmt(d.waste)} · ${d.cnt} 次`"
+                    >
+                      <div class="rs-ub-track">
+                        <div class="rs-ub-stack">
+                          <div class="rs-ub-waste" :style="{ height: ubH(u, d.waste) }"></div>
+                          <div class="rs-ub-valid" :style="{ height: ubH(u, d.valid) }"></div>
+                        </div>
+                      </div>
+                    </div>
+                    <span class="rs-ub-hint">近 {{ u.days.length }} 天逐日报工</span>
                   </div>
                   <div class="rs-bar-track">
                     <div class="rs-bar-fill" :style="{ width: barPct(u.valid), background: rankColor(ui) }"></div>
@@ -133,6 +156,54 @@
         <p class="empty-desc">窗口内没有带报工时间的报工记录</p>
       </div>
     </div>
+
+    <!-- 个人日报弹窗：每日每人报工明细 -->
+    <el-dialog v-model="userDailyVisible" width="92%" :style="{ maxWidth: '560px' }" align-center append-to-body destroy-on-close>
+      <template #header>
+        <div class="rsd-header">
+          <span class="rsd-title">{{ userDaily.name }}</span>
+          <span class="rsd-sub">{{ userDaily.line }}</span>
+        </div>
+      </template>
+
+      <template v-if="userDaily.days">
+        <!-- 汇总 -->
+        <div class="rsd-summary">
+          <div class="rsd-stat">
+            <span class="rsd-num" style="color: var(--primary)">{{ fmt(userDaily.valid) }}</span>
+            <span class="rsd-label">良品（件）</span>
+          </div>
+          <div class="rsd-stat">
+            <span class="rsd-num" style="color: #ef4444">{{ fmt(userDaily.waste) }}</span>
+            <span class="rsd-label">废品（件）</span>
+          </div>
+          <div class="rsd-stat">
+            <span class="rsd-num">{{ fmt(userDaily.cnt) }}</span>
+            <span class="rsd-label">报工次数</span>
+          </div>
+          <div class="rsd-stat">
+            <span class="rsd-num" style="color: #10b981">{{ userDaily.passRate }}%</span>
+            <span class="rsd-label">合格率</span>
+          </div>
+        </div>
+
+        <!-- 每日明细列表 -->
+        <div class="rsd-list">
+          <div v-for="(d, di) in userDaily.days" :key="di" class="rsd-day">
+            <span class="rsd-date" :class="{ zero: d.valid + d.waste === 0 }">{{ d.date.slice(5) }}</span>
+            <div class="rsd-bar-track">
+              <div class="rsd-bar-valid" :style="{ width: rsdPct(d.valid) }"></div>
+              <div class="rsd-bar-waste" :style="{ width: rsdPct(d.waste) }"></div>
+            </div>
+            <span class="rsd-nums">
+              <b class="rsd-v">{{ fmt(d.valid) }}</b>
+              <span v-if="d.waste > 0" class="rsd-w">废 {{ fmt(d.waste) }}</span>
+              <span class="rsd-c">{{ d.cnt }} 次</span>
+            </span>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
   </section>
 </template>
 
@@ -254,6 +325,36 @@ function rankClass(i) {
 }
 function rankColor(i) {
   return MEDAL[i] || '#007aff'
+}
+
+/* ===== 个人日报：每日每人报工 ===== */
+const userDailyVisible = ref(false)
+const userDaily = ref({ name: '', line: '', valid: 0, waste: 0, cnt: 0, passRate: 100, days: [] })
+
+function openUserDaily(u, g) {
+  userDaily.value = {
+    name: u.name,
+    line: g.misc ? '未分组' : u.line,
+    valid: u.valid,
+    waste: u.waste,
+    cnt: u.cnt,
+    passRate: u.passRate,
+    days: u.days || [],
+  }
+  userDailyVisible.value = true
+}
+
+/** 成员每日迷你柱高度（良品/废品分别相对该人窗口内最大单日良品+废品归一） */
+function ubH(u, v) {
+  const selfMax = Math.max(1, ...(u.days || []).map((d) => (d.valid || 0) + (d.waste || 0)))
+  // 相对本人最大值归一（最多占满），保证跨人不失真
+  return `${Math.max(0, Math.round((v / selfMax) * 100))}%`
+}
+
+/** 个人日报横向条宽：相对该人窗口内最大单日总量 */
+function rsdPct(v) {
+  const selfMax = Math.max(1, ...(userDaily.value.days || []).map((d) => (d.valid || 0) + (d.waste || 0)))
+  return `${Math.max(0, Math.round((v / selfMax) * 100))}%`
 }
 
 /* ===== 颜色 ===== */
@@ -402,15 +503,23 @@ onMounted(load)
   background: var(--primary);
 }
 
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
 .range-text {
-  flex: 1;
+  max-width: 132px;
   min-width: 0;
   font-size: 11.5px;
   color: var(--muted-foreground);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-align: center;
+  text-align: right;
 }
 
 .refresh-btn {
@@ -524,8 +633,7 @@ onMounted(load)
 }
 
 .rs-craft-meta {
-  margin-left: auto;
-  flex-shrink: 0;
+  margin: 3px 0 0 37px;
   font-size: 11px;
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
@@ -542,6 +650,10 @@ onMounted(load)
 }
 
 .rs-line {
+  min-width: 0;
+}
+
+.rs-line-top {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -549,6 +661,7 @@ onMounted(load)
 }
 
 .rs-line-name {
+  flex: 1;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--foreground);
@@ -566,7 +679,7 @@ onMounted(load)
 }
 
 .rs-line-meta {
-  flex-shrink: 0;
+  margin-top: 2px;
   font-size: 11px;
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
@@ -580,9 +693,8 @@ onMounted(load)
 }
 
 .rs-line-bar {
-  flex: 1;
-  min-width: 40px;
-  max-width: 90px;
+  width: 100%;
+  margin-top: 4px;
 }
 
 /* 报工人所属产线标签 */
@@ -806,8 +918,196 @@ onMounted(load)
   color: var(--muted-foreground);
 }
 
+/* ===== 成员每日报工迷你柱 ===== */
+.rs-user-bars {
+  margin-top: 8px;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.rs-ub-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.rs-ub-track {
+  height: 26px;
+  border-radius: 6px;
+  background: var(--muted, rgba(128, 128, 128, 0.1));
+  overflow: hidden;
+}
+
+.rs-ub-stack {
+  display: flex;
+  flex-direction: column-reverse;
+  height: 100%;
+  width: 100%;
+}
+
+.rs-ub-valid {
+  width: 100%;
+  min-height: 0;
+  background: var(--primary, #007aff);
+  opacity: 0.85;
+  border-radius: 2px;
+}
+
+.rs-ub-waste {
+  width: 100%;
+  min-height: 0;
+  background: #ef4444;
+  opacity: 0.85;
+  border-radius: 2px;
+}
+
+.rs-ub-hint {
+  flex-shrink: 0;
+  margin-left: 6px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.rs-row {
+  cursor: pointer;
+}
+
+/* ===== 个人日报弹窗 ===== */
+.rsd-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rsd-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.rsd-sub {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rsd-summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.rsd-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--muted, rgba(128, 128, 128, 0.06));
+}
+
+.rsd-num {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.rsd-label {
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.rsd-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.rsd-day {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 2px;
+}
+
+.rsd-day + .rsd-day {
+  border-top: 1px solid var(--border);
+}
+
+.rsd-date {
+  width: 34px;
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.rsd-date.zero {
+  color: var(--muted-foreground);
+}
+
+.rsd-bar-track {
+  flex: 1;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--muted, rgba(128, 128, 128, 0.12));
+  overflow: hidden;
+  display: flex;
+}
+
+.rsd-bar-valid {
+  height: 100%;
+  background: var(--primary, #007aff);
+  opacity: 0.85;
+}
+
+.rsd-bar-waste {
+  height: 100%;
+  background: #ef4444;
+  opacity: 0.85;
+}
+
+.rsd-nums {
+  width: 84px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rsd-v {
+  color: var(--foreground);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.rsd-w {
+  color: #ef4444;
+  margin-left: 4px;
+}
+
+.rsd-c {
+  margin-left: 4px;
+}
+
 /* ===== 桌面端 ===== */
 @media (min-width: 768px) {
+  .rsd-summary {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
   .stats-row {
     grid-template-columns: repeat(4, 1fr);
     gap: 12px;

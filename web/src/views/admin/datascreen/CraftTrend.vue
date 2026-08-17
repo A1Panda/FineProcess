@@ -64,23 +64,22 @@
         <!-- 按日汇总：每日良品+废品堆叠柱（随工序筛选联动） -->
         <div class="chart-card">
           <div class="chart-head">
-            <div class="chart-title">按日汇总</div>
-            <div class="chart-desc">近 {{ days }} 天每日报工良品按工序堆叠显示，废品叠加在顶部，点击柱子查看明细</div>
-          </div>
-          <div class="chart-toolbar">
-            <label class="yctl">
-              <span class="yctl-label">Y 轴上限</span>
-              <el-switch
-                v-model="yAuto"
-                size="small"
-                inline-prompt
-                active-text="自动"
-                inactive-text="手动"
-              />
-            </label>
-            <div v-if="!yAuto" class="yctl-input">
-              <input v-model.number="yManualVal" type="number" min="0" step="100" placeholder="上限值" />
-              <span class="yctl-unit">件</span>
+            <div class="chart-head-text">
+              <div class="chart-title">按日汇总</div>
+              <div class="chart-desc">近 {{ days }} 天每日报工良品按工序堆叠显示，废品叠加在顶部，点击柱子查看明细</div>
+            </div>
+            <div class="chart-toolbar">
+              <div class="yctl">
+                <span class="yctl-label">Y 轴上限</span>
+                <div class="yctl-seg">
+                  <button type="button" :class="{ active: yAuto }" @click="yAuto = true">自动</button>
+                  <button type="button" :class="{ active: !yAuto }" @click="yAuto = false">手动</button>
+                </div>
+              </div>
+              <div v-if="!yAuto" class="yctl-input">
+                <input v-model.number="yManualVal" type="number" min="0" step="100" placeholder="上限值" />
+                <span class="yctl-unit">件</span>
+              </div>
             </div>
           </div>
           <svg class="ct-svg" :viewBox="`0 0 ${W} ${H}`" preserveAspectRatio="xMidYMid meet">
@@ -792,25 +791,65 @@ onMounted(load)
   color: var(--muted-foreground);
 }
 
-/* Y 轴上限控件 */
+/* 卡片头：标题左、Y 轴上限控件右（移动端自动换行） */
+.chart-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px 14px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.chart-head-text {
+  min-width: 0;
+}
+
+/* Y 轴上限控件：iOS 风格分段控件 */
 .chart-toolbar {
   display: flex;
   align-items: center;
   gap: 8px 12px;
   flex-wrap: wrap;
-  margin: -2px 0 10px;
+  margin-left: auto;
 }
 
 .yctl {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   font-size: 12px;
   color: var(--muted-foreground);
+  white-space: nowrap;
 }
 
-.yctl-label {
+.yctl-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--muted, #f2f2f7);
+  border-radius: 9px;
+}
+
+.yctl-seg button {
+  border: none;
+  background: transparent;
+  padding: 4px 13px;
+  font-size: 12px;
+  line-height: 1.4;
+  border-radius: 7px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
   white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.yctl-seg button.active {
+  background: var(--card, #fff);
+  color: var(--foreground, #1d1d1f);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .yctl-input {
@@ -820,8 +859,8 @@ onMounted(load)
 }
 
 .yctl-input input {
-  width: 88px;
-  padding: 5px 8px;
+  width: 92px;
+  padding: 5px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--card);
@@ -829,10 +868,21 @@ onMounted(load)
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* 隐藏数字输入框的上下箭头（Chrome/Safari/Edge） */
+.yctl-input input::-webkit-outer-spin-button,
+.yctl-input input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .yctl-input input:focus {
-  border-color: var(--primary);
+  border-color: #007aff;
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.15);
 }
 
 .yctl-unit {
