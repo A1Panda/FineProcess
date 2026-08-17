@@ -142,6 +142,16 @@ export class TasksController {
     return this.tasks.getReportStats(days !== undefined ? Number(days) : 7);
   }
 
+  /** 管理员数据大屏：报工记录明细（按报工时间倒序）。
+   *  参数：limit（条数，默认 500，最多 1000）、today（true=只取今日全部） */
+  @Get('recent-reports')
+  getRecentReports(@Query('limit') limit?: string, @Query('today') today?: string) {
+    return this.tasks.getRecentReports(
+      limit !== undefined ? Number(limit) : 500,
+      today === '1' || today === 'true',
+    );
+  }
+
   /** 管理员数据大屏：单工序多日报工（某加工单某工序近 N 天每日良品/废品/报工次数）。
    *  参数：billCode、craftName（必填）、days（7~30，默认 7） */
   @Get('craft-daily')

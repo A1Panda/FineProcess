@@ -47,58 +47,90 @@
 
     <div v-loading="loading" class="charts">
       <template v-if="hasData">
-        <!-- 按工序汇总：工序为主，产线为次 -->
+        <!-- 产量趋势：每日良品折线 + 废品虚线 -->
+        <div class="chart-card">
+          <div class="chart-head">
+            <div class="chart-title">产量趋势</div>
+            <div class="chart-desc">窗口内每日良品产出走势（废品独立比例显示）</div>
+            <div class="rs-legend">
+              <span class="lg"><i class="lg-dot lg-valid"></i>良品</span>
+              <span class="lg"><i class="lg-dot lg-waste"></i>废品</span>
+            </div>
+          </div>
+          <div class="rs-trend">
+            <div class="rs-trend-plot" :title="trendTitle">
+              <svg class="rs-trend-svg" viewBox="0 0 100 54" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="rs-trend-grad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" style="stop-color: var(--primary); stop-opacity: 0.28" />
+                    <stop offset="100%" style="stop-color: var(--primary); stop-opacity: 0.02" />
+                  </linearGradient>
+                </defs>
+                <path class="rs-trend-area" :d="trendArea" fill="url(#rs-trend-grad)"></path>
+                <path v-if="trendHasWaste" class="rs-trend-wline" :d="trendWasteLine"></path>
+                <path class="rs-trend-vline" :d="trendLine"></path>
+              </svg>
+              <span v-if="trendLine" class="rs-trend-dot" :style="{ left: trendLastX, top: trendLastY }"></span>
+            </div>
+            <div class="rs-trend-x">
+              <span v-for="(lb, i) in trendLabels" :key="i" class="rs-trend-xlab" :class="lb.align">{{ lb.text }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 按工序汇总：堆叠条对比，展开看产线明细 -->
         <div class="chart-card">
           <div class="chart-head">
             <div class="chart-title">按工序汇总</div>
-            <div class="chart-desc">各工序累计产量与一次合格率，展开查看各产线/班组细分</div>
+            <div class="chart-desc">良品（工序色）与废品（红）堆叠对比，点击工序展开产线明细</div>
           </div>
           <div class="rs-list">
-            <div v-for="(c, ci) in crafts" :key="c.name" class="rs-craft">
-              <button class="rs-craft-head" :class="{ open: openSet.has(c.name) }" @click="toggleCraft(c.name)">
+            <div v-for="(c, ci) in crafts" :key="c.name" class="rs-craft" :class="{ open: openSet.has(c.name) }">
+              <button class="rs-craft-head" @click="toggleCraft(c.name)">
                 <el-icon class="rs-caret" :size="12"><ArrowDown /></el-icon>
                 <span class="rs-dot" :style="{ background: colorOf(ci) }"></span>
                 <span class="rs-name">{{ c.name }}</span>
                 <span class="rs-valid">{{ fmt(c.valid) }} 件</span>
               </button>
-              <div class="rs-craft-meta">废品 {{ fmt(c.waste) }} · 报工 {{ c.cnt }} 次</div>
-              <div v-if="openSet.has(c.name)" class="rs-lines">
-                <div v-for="(l, li) in c.lines" :key="l.line" class="rs-line">
-                  <div class="rs-line-top">
-                    <span class="rs-line-name">{{ l.line }}</span>
-                    <span class="rs-line-valid">{{ fmt(l.valid) }} 件</span>
-                    <span class="rs-line-rate" :style="{ color: passColor(l.passRate) }">{{ l.passRate }}%</span>
-                  </div>
-                  <div class="rs-line-meta">废品 {{ fmt(l.waste) }} · 报工 {{ l.cnt }} 次</div>
-                  <el-progress
-                    class="rs-line-bar"
-                    :percentage="l.passRate"
-                    :show-text="false"
-                    :stroke-width="5"
-                    :color="passColor(l.passRate)"
-                  />
-                </div>
+              <div class="rs-craft-foot">
+                <span class="rs-craft-meta">废品 {{ fmt(c.waste) }} · 报工 {{ c.cnt }} 次</span>
+                <span class="rs-rate" :style="{ color: passColor(c.passRate) }">合格率 {{ c.passRate }}%</span>
               </div>
-              <div class="rs-pass">
-                <span class="rs-pass-label">工序合格率</span>
-                <el-progress
-                  class="rs-pass-bar"
-                  :percentage="c.passRate"
-                  :show-text="false"
-                  :stroke-width="6"
-                  :color="passColor(c.passRate)"
-                />
-                <span class="rs-pass-num" :style="{ color: passColor(c.passRate) }">{{ c.passRate }}%</span>
+              <!-- 展开：分组/产线对比 + 组内成员对比 -->
+              <div v-if="openSet.has(c.name)" class="rs-lines">
+                <div v-for="(l, li) in c.lines" :key="l.line" class="rs-lgrp">
+                  <div class="rs-lgrp-head">
+                    <span class="rs-lgrp-name" :title="l.line">{{ l.line }}</span>
+                    <span class="rs-lgrp-valid">{{ fmt(l.valid) }} 件</span>
+                    <span class="rs-lgrp-rate" :style="{ color: passColor(l.passRate) }">{{ l.passRate }}%</span>
+                  </div>
+                  <!-- 组间对比条：本工序内归一 -->
+                  <div class="rs-lgrp-track">
+                    <div class="rs-lgrp-fill" :style="{ width: lmPct(c, l), background: colorOf(ci) }"></div>
+                  </div>
+                  <!-- 组内成员对比 -->
+                  <div class="rs-lgrp-members">
+                    <div v-for="(m, mi) in l.members" :key="m.name" class="rs-lm-row">
+                      <span class="rs-lm-rank" :class="rankClass(mi)">{{ mi + 1 }}</span>
+                      <span class="rs-lm-name">{{ m.name }}</span>
+                      <div class="rs-lm-bar">
+                        <div class="rs-lm-bar-fill" :style="{ width: gmPct(l, m), background: colorOf(ci) }"></div>
+                      </div>
+                      <span class="rs-lm-valid">{{ fmt(m.valid) }}</span>
+                      <span class="rs-lm-rate" :style="{ color: passColor(m.passRate) }">{{ m.passRate }}%</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- 按报工人汇总：按产线/组分组展示成员贡献 -->
+        <!-- 按报工人汇总：分组排行，点击看个人日报 -->
         <div class="chart-card">
           <div class="chart-head">
             <div class="chart-title">按报工人汇总</div>
-            <div class="chart-desc">窗口内按产线/组分组的人员产量贡献（组内按良品数降序，含所属产线/班组）</div>
+            <div class="chart-desc">按产线/组分组的人员产量排行，点击任意成员查看个人日报</div>
           </div>
           <div class="rs-list">
             <div v-for="(g, gi) in userGroups" :key="g.line" class="rs-group">
@@ -118,25 +150,8 @@
                     <span v-if="u.line && !g.misc" class="rs-u-line">{{ u.line }}</span>
                     <span class="rs-valid">{{ fmt(u.valid) }} 件</span>
                   </div>
-                  <!-- 每日报工迷你柱：良品（蓝）上叠废品（红），悬浮看每日明细，点击看日报 -->
-                  <div v-if="u.days && u.days.length" class="rs-user-bars">
-                    <div
-                      v-for="(d, di) in u.days"
-                      :key="di"
-                      class="rs-ub-col"
-                      :title="`${d.date.slice(5)}：良 ${fmt(d.valid)} · 废 ${fmt(d.waste)} · ${d.cnt} 次`"
-                    >
-                      <div class="rs-ub-track">
-                        <div class="rs-ub-stack">
-                          <div class="rs-ub-waste" :style="{ height: ubH(u, d.waste) }"></div>
-                          <div class="rs-ub-valid" :style="{ height: ubH(u, d.valid) }"></div>
-                        </div>
-                      </div>
-                    </div>
-                    <span class="rs-ub-hint">近 {{ u.days.length }} 天逐日报工</span>
-                  </div>
                   <div class="rs-bar-track">
-                    <div class="rs-bar-fill" :style="{ width: barPct(u.valid), background: rankColor(ui) }"></div>
+                    <div class="rs-bar-fill" :style="{ width: uBarW(g, u), background: rankColor(ui) }"></div>
                   </div>
                   <div class="rs-metrics">
                     <span class="rs-m">废品 {{ fmt(u.waste) }}</span>
@@ -187,9 +202,9 @@
           </div>
         </div>
 
-        <!-- 每日明细列表 -->
+        <!-- 每日明细列表：新日期在上 -->
         <div class="rsd-list">
-          <div v-for="(d, di) in userDaily.days" :key="di" class="rsd-day">
+          <div v-for="(d, di) in [...userDaily.days].reverse()" :key="d.date" class="rsd-day">
             <span class="rsd-date" :class="{ zero: d.valid + d.waste === 0 }">{{ d.date.slice(5) }}</span>
             <div class="rsd-bar-track">
               <div class="rsd-bar-valid" :style="{ width: rsdPct(d.valid) }"></div>
@@ -237,6 +252,7 @@ const refreshing = ref(false)
 const raw = ref({ days: 7, startDate: '', endDate: '', daily: [], crafts: [], users: [] })
 const crafts = computed(() => raw.value.crafts || [])
 const users = computed(() => raw.value.users || [])
+const daily = computed(() => raw.value.daily || [])
 
 /* ===== 按报工人分组：按产线/组聚合（组按良品降序，未分组排最后） ===== */
 const userGroups = computed(() => {
@@ -281,6 +297,82 @@ const summary = computed(() => {
   return { valid, waste, cnt, passRate, dailyValid }
 })
 
+/* ===== 产量趋势折线图 ===== */
+const TW = 100
+const TH = 54
+const T_PAD = { t: 5, b: 6, l: 3, r: 3 }
+
+function tMax(pick) {
+  return Math.max(1, ...daily.value.map((d) => pick(d) || 0))
+}
+
+function tPts(pick) {
+  const arr = daily.value
+  const n = arr.length
+  const max = tMax(pick)
+  return arr.map((d, i) => {
+    const x = n > 1 ? T_PAD.l + (i / (n - 1)) * (TW - T_PAD.l - T_PAD.r) : TW / 2
+    const y = T_PAD.t + (1 - (pick(d) || 0) / max) * (TH - T_PAD.t - T_PAD.b)
+    return [x, y]
+  })
+}
+
+/** Catmull-Rom 平滑曲线 */
+function smoothPath(pts) {
+  const n = pts.length
+  if (!n) return ''
+  if (n === 1) return `M ${pts[0][0]} ${pts[0][1]}`
+  let d = `M ${pts[0][0].toFixed(2)} ${pts[0][1].toFixed(2)}`
+  for (let i = 0; i < n - 1; i++) {
+    const p0 = pts[i - 1] || pts[i]
+    const p1 = pts[i]
+    const p2 = pts[i + 1]
+    const p3 = pts[i + 2] || p2
+    d += ` C ${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(2)} ${(p1[1] + (p2[1] - p0[1]) / 6).toFixed(2)}, ${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(2)} ${(p2[1] - (p3[1] - p1[1]) / 6).toFixed(2)}, ${p2[0].toFixed(2)} ${p2[1].toFixed(2)}`
+  }
+  return d
+}
+
+const trendLine = computed(() => smoothPath(tPts((d) => d.valid)))
+
+const trendArea = computed(() => {
+  const pts = tPts((d) => d.valid)
+  if (!pts.length) return ''
+  const base = TH - T_PAD.b
+  return `${smoothPath(pts)} L ${pts[pts.length - 1][0].toFixed(2)} ${base} L ${pts[0][0].toFixed(2)} ${base} Z`
+})
+
+const trendHasWaste = computed(() => daily.value.some((d) => (d.waste || 0) > 0))
+
+const trendWasteLine = computed(() => smoothPath(tPts((d) => d.waste)))
+
+const trendLastX = computed(() => {
+  const p = tPts((d) => d.valid)
+  return p.length ? `${(p[p.length - 1][0] / TW) * 100}%` : '0%'
+})
+
+const trendLastY = computed(() => {
+  const p = tPts((d) => d.valid)
+  return p.length ? `${(p[p.length - 1][1] / TH) * 100}%` : '0%'
+})
+
+/** X 轴标签：取首/中/尾三个日期，短格式 MM-DD */
+const trendLabels = computed(() => {
+  const arr = daily.value
+  const n = arr.length
+  if (!n) return []
+  const idx = n === 1 ? [0] : n === 2 ? [0, 1] : n === 3 ? [0, 1, 2] : [0, Math.floor(n / 2), n - 1]
+  return idx.map((i, k) => ({
+    text: (arr[i].date || '').slice(5),
+    align: k === 0 ? 'left' : k === idx.length - 1 ? 'right' : 'center',
+  }))
+})
+
+/** 悬浮提示：每日 良/废/次数 */
+const trendTitle = computed(() =>
+  daily.value.map((d) => `${d.date.slice(5)} 良 ${fmt(d.valid)} · 废 ${fmt(d.waste)} · ${d.cnt} 次`).join('\n'),
+)
+
 /* ===== 工序展开 ===== */
 const openSet = ref(new Set())
 function toggleCraft(name) {
@@ -310,15 +402,26 @@ function passColor(rate) {
   return rate >= 99 ? '#10b981' : rate >= 90 ? '#f59e0b' : '#ef4444'
 }
 
-/* ===== 排行样式 ===== */
-const maxUserValid = computed(() => {
-  let m = 0
-  for (const u of users.value) m = Math.max(m, u.valid)
-  return m
-})
-function barPct(v) {
-  return maxUserValid.value > 0 ? Math.max(3, (v / maxUserValid.value) * 100) : 0
+/* ===== 分组/成员对比条 ===== */
+/** 组间条宽：相对本工序内最大分组良品归一（至少 4% 可见） */
+function lmPct(c, l) {
+  const max = Math.max(1, ...(c.lines || []).map((x) => x.valid || 0))
+  return `${Math.max(4, Math.round(((l.valid || 0) / max) * 100))}%`
 }
+
+/** 组内成员条宽：相对该组内最大成员良品归一（至少 4% 可见） */
+function gmPct(l, m) {
+  const max = Math.max(1, ...(l.members || []).map((x) => x.valid || 0))
+  return `${Math.max(4, Math.round(((m.valid || 0) / max) * 100))}%`
+}
+
+/* ===== 排行样式 ===== */
+/** 人员产量条：相对组内最大成员良品归一（至少 3% 可见） */
+function uBarW(g, u) {
+  const max = Math.max(1, ...(g.members || []).map((x) => x.valid || 0))
+  return `${Math.max(3, Math.round(((u.valid || 0) / max) * 100))}%`
+}
+
 const MEDAL = ['#f5a623', '#a8b2c1', '#cd8a5a']
 function rankClass(i) {
   return `rank-${i + 1}`
@@ -342,13 +445,6 @@ function openUserDaily(u, g) {
     days: u.days || [],
   }
   userDailyVisible.value = true
-}
-
-/** 成员每日迷你柱高度（良品/废品分别相对该人窗口内最大单日良品+废品归一） */
-function ubH(u, v) {
-  const selfMax = Math.max(1, ...(u.days || []).map((d) => (d.valid || 0) + (d.waste || 0)))
-  // 相对本人最大值归一（最多占满），保证跨人不失真
-  return `${Math.max(0, Math.round((v / selfMax) * 100))}%`
 }
 
 /** 个人日报横向条宽：相对该人窗口内最大单日总量 */
@@ -473,6 +569,7 @@ onMounted(load)
 .toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
@@ -504,6 +601,7 @@ onMounted(load)
 }
 
 .toolbar-right {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -512,12 +610,10 @@ onMounted(load)
 }
 
 .range-text {
-  max-width: 132px;
+  flex: 1;
   min-width: 0;
   font-size: 11.5px;
   color: var(--muted-foreground);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   text-align: right;
 }
@@ -582,26 +678,112 @@ onMounted(load)
   color: var(--muted-foreground);
 }
 
-/* ===== 汇总列表 ===== */
+/* ===== 图例 ===== */
+.rs-legend {
+  margin-top: 8px;
+  display: flex;
+  gap: 14px;
+}
+
+.lg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.lg-dot {
+  width: 14px;
+  height: 3px;
+  border-radius: 999px;
+}
+
+.lg-valid {
+  background: var(--primary);
+}
+
+.lg-waste {
+  background: #ef4444;
+  background-image: repeating-linear-gradient(90deg, #ef4444 0 3px, transparent 3px 5px);
+}
+
+/* ===== 产量趋势图 ===== */
+.rs-trend {
+  margin-top: 2px;
+}
+
+.rs-trend-plot {
+  position: relative;
+  height: 120px;
+}
+
+.rs-trend-svg {
+  display: block;
+  width: 100%;
+  height: 120px;
+  overflow: visible;
+}
+
+.rs-trend-vline {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.rs-trend-wline {
+  fill: none;
+  stroke: #ef4444;
+  stroke-width: 1.4;
+  stroke-dasharray: 4 4;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+/* 最新日圆点：HTML 叠加保证圆形不被 viewBox 拉伸 */
+.rs-trend-dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--primary);
+  border: 2px solid var(--card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.rs-trend-x {
+  position: relative;
+  height: 16px;
+  margin-top: 2px;
+}
+
+.rs-trend-xlab {
+  position: absolute;
+  top: 0;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.rs-trend-xlab.left { left: 0; }
+.rs-trend-xlab.center { left: 50%; transform: translateX(-50%); }
+.rs-trend-xlab.right { right: 0; }
+
+/* ===== 按工序汇总 ===== */
 .rs-list {
   display: flex;
   flex-direction: column;
 }
 
-.rs-row + .rs-row {
-  border-top: 1px solid var(--border);
-}
-
-.rs-row {
-  padding: 10px 2px;
-}
-
-/* 工序分组：头部可展开 */
 .rs-craft {
   border-radius: 12px;
-  padding: 10px 10px;
+  padding: 10px 8px;
   margin: 0 -8px;
-  transition: background 0.15s ease;
 }
 
 .rs-craft + .rs-craft {
@@ -628,41 +810,42 @@ onMounted(load)
   transition: transform 0.18s ease;
 }
 
-.rs-craft-head.open .rs-caret {
+.rs-craft.open .rs-caret {
   transform: rotate(180deg);
 }
 
+.rs-craft-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-left: 20px;
+  margin-top: 6px;
+}
+
 .rs-craft-meta {
-  margin: 3px 0 0 37px;
   font-size: 11px;
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }
 
-/* 产线子行 */
-.rs-lines {
-  margin: 8px 0 0 18px;
-  border-left: 2px solid var(--muted, rgba(128, 128, 128, 0.18));
-  padding-left: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.rs-rate {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
-.rs-line {
-  min-width: 0;
+.rs-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  flex-shrink: 0;
 }
 
-.rs-line-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.rs-line-name {
+.rs-name {
   flex: 1;
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--foreground);
   overflow: hidden;
@@ -670,50 +853,158 @@ onMounted(load)
   white-space: nowrap;
 }
 
-.rs-line-valid {
+.rs-valid {
   flex-shrink: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--primary);
   font-variant-numeric: tabular-nums;
 }
 
-.rs-line-meta {
-  margin-top: 2px;
-  font-size: 11px;
-  color: var(--muted-foreground);
+/* 展开：分组/产线对比 */
+.rs-lines {
+  margin: 8px 0 2px 20px;
+  border-left: 2px solid var(--muted, rgba(128, 128, 128, 0.18));
+  padding-left: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rs-lgrp {
+  min-width: 0;
+}
+
+.rs-lgrp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rs-lgrp-name {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rs-lgrp-valid {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary);
   font-variant-numeric: tabular-nums;
 }
 
-.rs-line-rate {
+.rs-lgrp-rate {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
-.rs-line-bar {
-  width: 100%;
-  margin-top: 4px;
+/* 组间对比条 */
+.rs-lgrp-track {
+  margin-top: 5px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--muted, rgba(128, 128, 128, 0.12));
+  overflow: hidden;
 }
 
-/* 报工人所属产线标签 */
-.rs-u-line {
-  flex-shrink: 0;
-  font-size: 10.5px;
-  color: var(--muted-foreground);
-  background: var(--muted, rgba(128, 128, 128, 0.12));
+.rs-lgrp-fill {
+  height: 100%;
   border-radius: 999px;
-  padding: 1px 8px;
+  opacity: 0.85;
+  transition: width 0.3s ease;
+}
+
+/* 组内成员对比 */
+.rs-lgrp-members {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.rs-lm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rs-lm-rank {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--muted-foreground);
+}
+
+.rs-lm-rank.rank-1 { background: #f5a623; }
+.rs-lm-rank.rank-2 { background: #a8b2c1; }
+.rs-lm-rank.rank-3 { background: #cd8a5a; }
+
+.rs-lm-name {
+  width: 52px;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--foreground);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 130px;
 }
 
-/* 按报工人汇总：产线/组分组 */
+.rs-lm-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--muted, rgba(128, 128, 128, 0.12));
+  overflow: hidden;
+}
+
+.rs-lm-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  opacity: 0.85;
+  transition: width 0.3s ease;
+}
+
+.rs-lm-valid {
+  width: 40px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.rs-lm-rate {
+  width: 40px;
+  flex-shrink: 0;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== 按报工人汇总：产线/组分组 ===== */
 .rs-group {
-  padding: 10px 2px;
+  padding: 10px 8px;
+  margin: 0 -8px;
 }
 
 .rs-group + .rs-group {
@@ -721,6 +1012,10 @@ onMounted(load)
 }
 
 .rs-group-head {
+  min-width: 0;
+}
+
+.rs-group-top {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -732,6 +1027,7 @@ onMounted(load)
 }
 
 .rs-group-name {
+  flex: 1;
   font-size: 13.5px;
   font-weight: 700;
   color: var(--foreground);
@@ -741,8 +1037,7 @@ onMounted(load)
 }
 
 .rs-group-meta {
-  margin-left: auto;
-  flex-shrink: 0;
+  margin-top: 2px;
   font-size: 11px;
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
@@ -767,17 +1062,24 @@ onMounted(load)
   margin-top: 4px;
 }
 
+.rs-row + .rs-row {
+  border-top: 1px solid var(--border);
+}
+
+.rs-row {
+  padding: 9px 2px;
+  cursor: pointer;
+}
+
 @media (hover: hover) {
-  .rs-row {
-    border-radius: 12px;
-    padding: 10px 10px;
-    margin: 0 -8px;
-    transition: background 0.15s ease;
+  .rs-craft:hover,
+  .rs-row:hover {
+    background: var(--muted, rgba(128, 128, 128, 0.06));
   }
 
-  .rs-row:hover,
-  .rs-craft:hover {
-    background: var(--muted, rgba(128, 128, 128, 0.06));
+  .rs-craft,
+  .rs-row {
+    border-radius: 12px;
   }
 }
 
@@ -788,77 +1090,19 @@ onMounted(load)
   min-width: 0;
 }
 
-.rs-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 999px;
+.rs-u-line {
   flex-shrink: 0;
-}
-
-.rs-name {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--foreground);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  background: var(--muted, rgba(128, 128, 128, 0.12));
+  border-radius: 999px;
+  padding: 1px 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 130px;
 }
 
-.rs-valid {
-  margin-left: auto;
-  flex-shrink: 0;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.rs-metrics {
-  margin-top: 5px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  font-size: 11.5px;
-  color: var(--muted-foreground);
-  font-variant-numeric: tabular-nums;
-}
-
-.rs-m-low {
-  color: #ef4444;
-  font-weight: 600;
-}
-
-.rs-pass {
-  margin-top: 7px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.rs-pass-label {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--muted-foreground);
-}
-
-.rs-pass-bar {
-  flex: 1;
-  min-width: 0;
-}
-
-.rs-pass-bar :deep(.el-progress-bar__outer) {
-  background: var(--muted, rgba(128, 128, 128, 0.12));
-}
-
-.rs-pass-num {
-  flex-shrink: 0;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: #10b981;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 报工人排行：名次徽章 + 相对产量条 */
 .rs-rank {
   width: 20px;
   height: 20px;
@@ -892,6 +1136,21 @@ onMounted(load)
   transition: width 0.3s ease;
 }
 
+.rs-metrics {
+  margin-top: 5px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.rs-m-low {
+  color: #ef4444;
+  font-weight: 600;
+}
+
 /* ===== 空状态 ===== */
 .empty {
   display: flex;
@@ -916,61 +1175,6 @@ onMounted(load)
   margin: 0;
   font-size: 12px;
   color: var(--muted-foreground);
-}
-
-/* ===== 成员每日报工迷你柱 ===== */
-.rs-user-bars {
-  margin-top: 8px;
-  display: flex;
-  align-items: flex-end;
-  gap: 3px;
-}
-
-.rs-ub-col {
-  flex: 1;
-  min-width: 0;
-}
-
-.rs-ub-track {
-  height: 26px;
-  border-radius: 6px;
-  background: var(--muted, rgba(128, 128, 128, 0.1));
-  overflow: hidden;
-}
-
-.rs-ub-stack {
-  display: flex;
-  flex-direction: column-reverse;
-  height: 100%;
-  width: 100%;
-}
-
-.rs-ub-valid {
-  width: 100%;
-  min-height: 0;
-  background: var(--primary, #007aff);
-  opacity: 0.85;
-  border-radius: 2px;
-}
-
-.rs-ub-waste {
-  width: 100%;
-  min-height: 0;
-  background: #ef4444;
-  opacity: 0.85;
-  border-radius: 2px;
-}
-
-.rs-ub-hint {
-  flex-shrink: 0;
-  margin-left: 6px;
-  font-size: 10px;
-  color: var(--muted-foreground);
-  white-space: nowrap;
-}
-
-.rs-row {
-  cursor: pointer;
 }
 
 /* ===== 个人日报弹窗 ===== */
@@ -1126,6 +1330,11 @@ onMounted(load)
     width: 32px;
     height: 32px;
     border-radius: 10px;
+  }
+
+  .rs-trend-plot,
+  .rs-trend-svg {
+    height: 160px;
   }
 }
 </style>

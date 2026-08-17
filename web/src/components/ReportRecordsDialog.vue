@@ -7,29 +7,44 @@
     append-to-body
     destroy-on-close
   >
-    <!-- 自定义标题：报工记录 + 加工单号 -->
+    <!-- 自定义标题：报工记录 + 加工单号 + 条数 -->
     <template #header>
       <div class="dlg-header">
         <span class="dlg-title">报工记录</span>
         <span class="dlg-code">{{ props.task?.produceBillCode || '' }}</span>
+        <span class="dlg-count">共 {{ displayRecords.length }} 条</span>
       </div>
     </template>
 
-    <!-- 商品信息卡 -->
+    <!-- 商品信息 + 工序过滤（合并为一张卡片） -->
     <div v-if="props.task" class="bill-card">
       <div class="bill-goods" :title="props.task.goodsName">{{ props.task.goodsName }}</div>
-      <div class="bill-meta">
-        <span v-if="props.task.craftName" class="chip chip-craft">{{ props.task.craftName }}</span>
-        <span v-if="props.task.htNo" class="chip">HT {{ props.task.htNo }}</span>
+      <div v-if="props.task.craftName" class="bill-filter">
+        <div class="bill-meta">
+          <span v-if="props.task.craftName" class="chip chip-craft">{{ props.task.craftName }}</span>
+          <span v-if="props.task.htNo" class="chip">HT {{ props.task.htNo }}</span>
+        </div>
+        <div class="filter-switch">
+          <span class="filter-label">只显示「{{ props.task.craftName }}」工序报工</span>
+          <button
+            class="toggle"
+            :class="{ on: onlyCraft }"
+            role="switch"
+            :aria-checked="onlyCraft"
+            @click="toggleOnlyCraft"
+          >
+            <span class="knob"></span>
+          </button>
+        </div>
       </div>
     </div>
 
     <div v-if="loading" class="loading">加载中…</div>
-    <el-empty v-else-if="!records.length" description="暂无报工记录" />
+    <el-empty v-else-if="!displayRecords.length" :description="onlyCraft ? '该工序暂无报工记录' : '暂无报工记录'" />
     <div v-else class="records">
-      <div v-for="(r, i) in records" :key="r.id" class="record-item">
+      <div v-for="({ r, idx }) in displayRecords" :key="r.id" class="record-item">
         <div class="row-top">
-          <span class="seq">{{ records.length - i }}</span>
+          <span class="seq">{{ records.length - idx }}</span>
           <span class="craft-name">{{ r.craftName }}</span>
           <div v-if="canEdit(r)" class="row-actions">
             <button class="edit-btn" aria-label="修改" @click="startEdit(r)">
@@ -147,6 +162,33 @@ const currentUserId = computed(() => auth.user?.kgdUserId ?? '')
 
 const records = ref([])
 const loading = ref(false)
+
+/** 只显示当前工序报工的开关（按工序名记忆到 localStorage，下次打开自动恢复） */
+const onlyCraft = ref(false)
+function onlyCraftKey() {
+  return `reportDialog:onlyCraft:${props.task?.craftName || ''}`
+}
+watch(
+  () => props.task?.craftName,
+  (name) => {
+    onlyCraft.value = !!name && localStorage.getItem(onlyCraftKey()) === '1'
+  },
+  { immediate: true },
+)
+function toggleOnlyCraft() {
+  onlyCraft.value = !onlyCraft.value
+  try {
+    localStorage.setItem(onlyCraftKey(), onlyCraft.value ? '1' : '0')
+  } catch (e) {
+    /* 隐私模式等场景下写入失败时忽略 */
+  }
+}
+/** 过滤后的记录（保留原始序号）：开关开启时仅保留与任务工序一致的报工 */
+const displayRecords = computed(() => {
+  const all = records.value.map((r, idx) => ({ r, idx }))
+  if (!onlyCraft.value || !props.task?.craftName) return all
+  return all.filter(({ r }) => r.craftName === props.task.craftName)
+})
 
 const editingId = ref(null)
 const saving = ref(false)
@@ -315,6 +357,15 @@ async function saveEdit() {
   white-space: nowrap;
 }
 
+.dlg-count {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ===== 商品信息卡 ===== */
 .bill-card {
   background: var(--muted);
@@ -324,7 +375,7 @@ async function saveEdit() {
   margin-bottom: 10px;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
 }
 
 .bill-goods {
@@ -342,6 +393,7 @@ async function saveEdit() {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .chip {
@@ -358,6 +410,74 @@ async function saveEdit() {
   border-color: transparent;
   color: var(--primary);
   font-weight: 500;
+}
+
+/* ===== 工序过滤（chips 与开关同一行） ===== */
+.bill-filter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.filter-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.filter-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 开关（Apple 风格） */
+.toggle {
+  flex-shrink: 0;
+  width: 42px;
+  height: 25px;
+  border-radius: 999px;
+  border: none;
+  background: rgba(128, 128, 128, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.05);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.22s ease, box-shadow 0.22s ease;
+  padding: 0;
+}
+
+.toggle:active .knob {
+  width: 24px;
+}
+
+.toggle .knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1.5px 3px rgba(0, 0, 0, 0.28);
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), width 0.15s ease;
+}
+
+.toggle.on {
+  background: var(--primary, #007aff);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.04), 0 0 0 3px rgba(0, 122, 255, 0.18);
+}
+
+.toggle.on .knob {
+  transform: translateX(17px);
 }
 
 .loading {

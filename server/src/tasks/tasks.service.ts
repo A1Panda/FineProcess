@@ -74,6 +74,8 @@ export interface BillProgressStats {
   total: number;
   /** 进行中加工单数 */
   inProgress: number;
+  /** 单据未完成且任一工序已动工（进行中或已完成）的加工单数 */
+  craftActive: number;
   /** 已逾期（未完成且交期已过） */
   overdue: number;
   /** 临期（3 天内到期） */
@@ -112,6 +114,16 @@ export interface ReportStatsDay {
   cnt: number;
 }
 
+/** 报工统计：工序内单个成员汇总 */
+export interface ReportStatsCraftMember {
+  name: string;
+  valid: number;
+  waste: number;
+  cnt: number;
+  /** 一次合格率（良品/(良品+废品)，无废品数据为 100） */
+  passRate: number;
+}
+
 /** 报工统计：单条产线（报工人所属部门/分组）汇总 */
 export interface ReportStatsLine {
   /** 产线/分组名（如 生产部/南线、包装部/打磨/A组） */
@@ -121,6 +133,8 @@ export interface ReportStatsLine {
   cnt: number;
   /** 一次合格率（良品/(良品+废品)，无废品数据为 100） */
   passRate: number;
+  /** 该分组下成员明细（按良品降序） */
+  members: ReportStatsCraftMember[];
 }
 
 /** 报工统计：按工序汇总（含该工序下各产线细分） */
@@ -595,8 +609,22 @@ export class TasksService {
     return r;
   }
 
-  /** 完工（已完成） */
+  /** 完工（已完成）：无报工记录不允许直接完工，防止跳过加工直接完成 */
   async finish(id: number) {
+    const task = await this.taskCache.findOne({ where: { taskId: id } });
+    if (task) {
+      // 按 加工单+工序 查报工记录：没有任何报工（含良品/废品）则拒绝完工
+      const hasReport = await this.reportCache
+        .createQueryBuilder('r')
+        .where('r.bill_code = :bc AND r.craft_name = :cn', {
+          bc: task.billCode,
+          cn: task.craftName,
+        })
+        .getCount();
+      if (!hasReport) {
+        throw new BadRequestException(`【${task.craftName}】工序还没有报工记录，请先报工后再完工`);
+      }
+    }
     const r = await this.changeStatus(id, 3);
     await this.taskCache.update({ taskId: id }, { status: 3, statusName: '已完成' });
     this.sync.requestSync();
@@ -751,6 +779,10 @@ export class TasksService {
       .addSelect('SUM(CASE WHEN b.status = 1 THEN 1 ELSE 0 END)', 'unprogrammed')
       .addSelect('SUM(CASE WHEN b.status = 2 THEN 1 ELSE 0 END)', 'inProgress')
       .addSelect(
+        `SUM(CASE WHEN b.status IN (1,2) AND EXISTS (SELECT 1 FROM kgd_task_cache t WHERE t.bill_code = b.code AND t.status IN (2,3)) THEN 1 ELSE 0 END)`,
+        'craftActive',
+      )
+      .addSelect(
         `SUM(CASE WHEN b.status IN (1,2) AND b.deliveryDate IS NOT NULL AND b.deliveryDate <> '' AND SUBSTRING(b.deliveryDate,1,10) < '${today}' THEN 1 ELSE 0 END)`,
         'overdue',
       )
@@ -763,6 +795,7 @@ export class TasksService {
       unprogrammed: Number(statsRow?.unprogrammed ?? 0),
       total: Number(statsRow?.total ?? 0),
       inProgress: Number(statsRow?.inProgress ?? 0),
+      craftActive: Number(statsRow?.craftActive ?? 0),
       overdue: Number(statsRow?.overdue ?? 0),
       dueSoon: Number(statsRow?.dueSoon ?? 0),
     };
@@ -1105,6 +1138,51 @@ export class TasksService {
     return { days: n, startDate: start, endDate: today, daysList, crafts, generatedAt: new Date().toISOString() };
   }
 
+  /** 管理员数据大屏：报工记录明细（按报工时间倒序）。
+   *  参数：limit（条数，默认 500，最多 1000）、todayOnly（true=只取今日全部） */
+  async getRecentReports(limit = 500, todayOnly = false) {
+    const n = Math.min(1000, Math.max(1, Number(limit) || 500));
+    const qb = this.reportCache
+      .createQueryBuilder('r')
+      .select('r.id', 'id')
+      .addSelect('r.bill_code', 'billCode')
+      .addSelect('r.craft_name', 'craftName')
+      .addSelect('r.report_user_name', 'reportUserName')
+      .addSelect('r.valid_num', 'validNum')
+      .addSelect('r.waste_num', 'wasteNum')
+      .addSelect('r.report_time', 'reportTime')
+      .where("r.report_time <> ''")
+      .orderBy('r.report_time', 'DESC')
+      .addOrderBy('r.id', 'DESC');
+    if (todayOnly) {
+      const today = fmtToday();
+      qb.andWhere('r.report_time >= :start AND r.report_time < :end', {
+        start: `${today} 00:00:00`,
+        end: `${this.daysAhead(today, 1)} 00:00:00`,
+      });
+    }
+    qb.limit(n);
+    const rows = (await qb.getRawMany()) as Array<{
+      id: string;
+      billCode: string;
+      craftName: string;
+      reportUserName: string;
+      validNum: string;
+      wasteNum: string;
+      reportTime: string;
+    }>;
+    const list = rows.map((r) => ({
+      id: Number(r.id),
+      billCode: r.billCode || '',
+      craftName: r.craftName || '未知工序',
+      reportUserName: r.reportUserName || '',
+      validNum: Number(r.validNum) || 0,
+      wasteNum: Number(r.wasteNum) || 0,
+      reportTime: r.reportTime || '',
+    }));
+    return { list, generatedAt: new Date().toISOString() };
+  }
+
   /**
    * 管理员数据大屏：报工统计（近 N 天按日/按工序/按报工人汇总良品与废品）。
    * - days：统计天数（7~30，默认 7）
@@ -1179,13 +1257,22 @@ export class TasksService {
       // 工序下按产线细分
       let ln = c.lines.find((l) => l.line === line);
       if (!ln) {
-        ln = { line, valid: 0, waste: 0, cnt: 0, passRate: 100 };
+        ln = { line, valid: 0, waste: 0, cnt: 0, passRate: 100, members: [] };
         c.lines.push(ln);
       }
       ln.valid += valid;
       ln.waste += waste;
       ln.cnt += cnt;
+      // 工序内按（产线 × 人员）细分，供组间/组内对比
       const uname = r.userName || '未署名';
+      let m = ln.members.find((x) => x.name === uname);
+      if (!m) {
+        m = { name: uname, valid: 0, waste: 0, cnt: 0, passRate: 100 };
+        ln.members.push(m);
+      }
+      m.valid += valid;
+      m.waste += waste;
+      m.cnt += cnt;
       const u = userMap.get(uname) ?? { name: uname, line: lineOf.get(uname) || '未分组', valid: 0, waste: 0, cnt: 0, passRate: 100, days: [] };
       u.valid += valid;
       u.waste += waste;
@@ -1219,7 +1306,13 @@ export class TasksService {
       ...c,
       passRate: pass(c.valid, c.waste),
       lines: c.lines
-        .map((l) => ({ ...l, passRate: pass(l.valid, l.waste) }))
+        .map((l) => ({
+          ...l,
+          passRate: pass(l.valid, l.waste),
+          members: (l.members || [])
+            .map((m) => ({ ...m, passRate: pass(m.valid, m.waste) }))
+            .sort((a, b) => b.valid - a.valid),
+        }))
         .sort((a, b) => b.valid - a.valid),
     }));
     crafts.sort((a, b) => b.valid - a.valid);
