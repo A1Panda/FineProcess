@@ -75,7 +75,7 @@ export class ReportDataController {
   }
 
   /**
-   * 商品列表（本地包装查询，实时拉取快工单 /open_api/goods/list）。
+   * 商品列表（读本地缓存 kgd_goods_cache，查询前后台触发即时同步（30 秒节流），缓存为空时实时拉取兜底）。
    * 筛选参数：
    * - keyword：商品名/编号/规格模糊查询
    * - updatedAtStart / updatedAtEnd：更新时间窗口（`YYYY-MM-DD HH:mm:ss`）
