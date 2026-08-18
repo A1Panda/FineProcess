@@ -541,6 +541,9 @@ function copyCode() {
 }
 
 .bill-spec {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 150px;
   font-size: 12px;
   font-weight: 400;
   color: var(--text-secondary, #8a94a6);
