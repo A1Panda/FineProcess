@@ -145,10 +145,15 @@ export class TasksController {
   /** 管理员数据大屏：报工记录明细（按报工时间倒序）。
    *  参数：limit（条数，默认 500，最多 1000）、today（true=只取今日全部） */
   @Get('recent-reports')
-  getRecentReports(@Query('limit') limit?: string, @Query('today') today?: string) {
+  getRecentReports(
+    @Query('limit') limit?: string,
+    @Query('today') today?: string,
+    @Query('date') date?: string,
+  ) {
     return this.tasks.getRecentReports(
       limit !== undefined ? Number(limit) : 500,
       today === '1' || today === 'true',
+      date ?? '',
     );
   }
 

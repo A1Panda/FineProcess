@@ -1150,7 +1150,7 @@ export class TasksService {
 
   /** 管理员数据大屏：报工记录明细（按报工时间倒序）。
    *  参数：limit（条数，默认 500，最多 1000）、todayOnly（true=只取今日全部） */
-  async getRecentReports(limit = 500, todayOnly = false) {
+  async getRecentReports(limit = 500, todayOnly = false, date = '') {
     const n = Math.min(1000, Math.max(1, Number(limit) || 500));
     const qb = this.reportCache
       .createQueryBuilder('r')
@@ -1171,6 +1171,12 @@ export class TasksService {
       qb.andWhere('r.report_time >= :start AND r.report_time < :end', {
         start: `${today} 00:00:00`,
         end: `${this.daysAhead(today, 1)} 00:00:00`,
+      });
+    } else if (date) {
+      // 指定日期（YYYY-MM-DD）：柱状图点击某天柱子时查看当天报工明细
+      qb.andWhere('r.report_time >= :start AND r.report_time < :end', {
+        start: `${date} 00:00:00`,
+        end: `${this.daysAhead(date, 1)} 00:00:00`,
       });
     }
     qb.limit(n);

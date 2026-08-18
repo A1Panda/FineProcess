@@ -8,6 +8,29 @@
       </div>
       <div class="fs-top-right">
         <span class="fs-clock">{{ clockText }}</span>
+        <button
+          class="theme-toggle"
+          :class="{ anim: themeAnim }"
+          aria-label="切换深色模式"
+          title="切换深色模式"
+          @click="onToggleTheme"
+        >
+          <span class="toggle-icon">
+            <el-icon :size="15"><Moon v-if="isDark" /><Sunny v-else /></el-icon>
+          </span>
+        </button>
+        <button
+          class="fs-btn fs-scroll-toggle"
+          :class="{ on: scrollEnabled, off: !scrollEnabled }"
+          :aria-label="scrollEnabled ? '自动滚动已开启，点击关闭' : '自动滚动已关闭，点击开启'"
+          :title="scrollEnabled ? '自动滚动已开启，点击关闭' : '自动滚动已关闭，点击开启'"
+          @click="toggleScroll"
+        >
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M7 6.5 12 11.5 17 6.5" />
+            <path d="M7 12.5 12 17.5 17 12.5" />
+          </svg>
+        </button>
         <button class="fs-btn" :class="{ spinning: refreshing }" aria-label="刷新" @click="refreshData">
           <el-icon :size="15"><Refresh /></el-icon>
         </button>
@@ -76,7 +99,7 @@
               <line :x1="fsPadL" :x2="fsW - fsPadR" :y1="gv.y" :y2="gv.y" class="fs-grid-line" />
               <text :x="fsPadL - 6" :y="gv.y + 3.5" class="fs-axis-text" text-anchor="end">{{ fmt(gv.label) }}</text>
             </g>
-            <g v-for="(d, di) in dailySeries" :key="di">
+            <g v-for="(d, di) in dailySeries" :key="di" class="fs-trend-day" @click="openDayDetail(d)">
               <g>
                 <title>{{ d.date }}：良品 {{ fmt(d.valid) }} 件 · 废品 {{ fmt(d.waste) }} 件 · 报工 {{ d.cnt }} 次</title>
                 <!-- 各工序良品段：按工序顺序从下往上堆叠，颜色区分 -->
@@ -145,7 +168,7 @@
         </div>
 
         <!-- 今日报工记录：全部记录 + 已过多长时间（占左列剩余空间，内部滚动） -->
-        <div class="fs-panel fs-recent-panel">
+        <div class="fs-panel fs-recent-panel" :class="{ 'scroll-off': !scrollEnabled }">
           <div class="fs-panel-head">
             <span class="fs-panel-title">今日报工记录</span>
             <span class="fs-panel-sub">{{ todayStr() }} · 共 {{ recentReports.length }} 次</span>
@@ -156,7 +179,7 @@
               <span class="fs-recent-goods" :title="r.goodsName">
                 <span
                   class="fs-recent-goods-inner"
-                  :class="{ 'is-run': r.goodsOverflow }"
+                  :class="{ 'is-run': r.goodsOverflow && scrollEnabled }"
                   :style="{ '--shift': r.goodsShift + 'px', '--dur': r.goodsDur + 's' }"
                 >{{ r.goodsName || '—' }}</span>
               </span>
@@ -182,6 +205,7 @@
             :key="b.code"
             class="fs-bill"
             :class="{ 'is-overdue': b.overdue, 'is-today': b.todayReport, 'is-unprog': b.status === 1, 'is-paused': b.status === 5 }"
+            @click="openBillDetail(b)"
           >
             <div class="fs-bill-top">
               <span class="fs-bill-code">{{ b.goodsName || '—' }}</span>
@@ -189,7 +213,14 @@
             </div>
             <div class="fs-bill-sub">{{ b.code }} · {{ b.htNo || '—' }}</div>
             <div class="fs-bill-progress">
-              <div class="fs-bill-track"><i :style="{ width: b.progressPercent + '%' }"></i></div>
+              <div class="fs-bill-track">
+                <i
+                  v-for="(c, ci) in b.crafts"
+                  :key="ci"
+                  :style="{ width: billSegWidth(c, b), background: craftNameColor(c.craftName) }"
+                  :title="c.craftName + ' ' + (c.percent || 0) + '%'"
+                ></i>
+              </div>
               <span class="fs-bill-pct">{{ b.progressPercent }}%</span>
               <span class="fs-bill-cnt">{{ b.doneCrafts }}/{{ b.totalCrafts }} 序</span>
             </div>
@@ -213,11 +244,16 @@
               </div>
             </div>
             <div class="fs-bill-report">
-              <span v-if="b.todayReport" class="fs-bill-today">
-                <el-icon :size="11"><Clock /></el-icon>今日报工 {{ b.reportTimeText }}
+              <span class="fs-bill-report-side">
+                <span v-if="b.todayReport" class="fs-bill-today">
+                  <el-icon :size="11"><Clock /></el-icon>今日报工 {{ b.reportTimeText }}
+                </span>
+                <span v-else-if="b.lastReportTime" class="fs-bill-last">最后报工 {{ b.lastReportTime.slice(5, 16) }}</span>
+                <span v-else class="fs-bill-last">暂无报工</span>
               </span>
-              <span v-else-if="b.lastReportTime" class="fs-bill-last">最后报工 {{ b.lastReportTime.slice(5, 16) }}</span>
-              <span v-else class="fs-bill-last">暂无报工</span>
+              <span v-if="b.etaDate" class="fs-bill-eta" :class="{ risk: b.overrunDelivery }">
+                <el-icon :size="11"><Calendar /></el-icon>预计 {{ b.etaDate.slice(5) }}
+              </span>
             </div>
           </div>
           <div v-if="!filteredBills.length && !loading" class="fs-empty">{{ kpiFilter === 'all' ? '暂无进行中加工单' : '该分类下暂无加工单' }}</div>
@@ -282,6 +318,127 @@
         </div>
       </div>
     </div>
+
+    <!-- 工序产出趋势：点击柱子查看当日明细 -->
+    <el-dialog v-model="dayDlg" :title="dayDetailTitle" width="600px" append-to-body align-center class="fs-dlg-day">
+      <div v-if="dayDetail" class="fs-day-detail">
+        <!-- 摘要：统一卡片内三列，竖线分隔 -->
+        <div class="fs-day-summary">
+          <div class="fs-day-sum-cell">
+            <em class="fs-day-sum-num is-primary">{{ fmt(dayDetail.valid) }}</em>
+            <span class="fs-day-sum-label">良品（件）</span>
+          </div>
+          <div class="fs-day-sum-cell">
+            <em class="fs-day-sum-num" :class="{ 'is-waste': dayDetail.waste > 0 }">{{ fmt(dayDetail.waste) }}</em>
+            <span class="fs-day-sum-label">废品（件）</span>
+          </div>
+          <div class="fs-day-sum-cell">
+            <em class="fs-day-sum-num">{{ dayDetail.cnt }}</em>
+            <span class="fs-day-sum-label">报工次数</span>
+          </div>
+        </div>
+
+        <!-- 工序产出：色点 + 名称 + 占比条 + 数值 -->
+        <div class="fs-day-section">
+          <div class="fs-day-sec-title">工序产出</div>
+          <div v-if="dayDetail.segs.length" class="fs-day-list">
+            <div v-for="(s, si) in dayDetail.segs" :key="si" class="fs-day-row">
+              <i class="fs-chip-dot" :style="{ background: s.color }"></i>
+              <span class="fs-day-name">{{ s.name }}</span>
+              <span class="fs-day-bar">
+                <i class="fs-day-bar-in" :style="{ width: dayPct(s), background: s.color }"></i>
+              </span>
+              <span class="fs-day-nums">
+                <b class="fs-day-valid">{{ fmt(s.valid) }}</b>
+                <i v-if="s.waste > 0" class="fs-day-waste">{{ fmt(s.waste) }}</i>
+                <em class="fs-day-cnt">{{ s.cnt }}次</em>
+              </span>
+            </div>
+          </div>
+          <div v-else class="fs-day-empty">当日暂无报工</div>
+        </div>
+
+        <!-- 报工人员：工序色点 + 人员胶囊 -->
+        <div class="fs-day-section">
+          <div class="fs-day-sec-title">报工人员</div>
+          <div v-if="dayDetailWorkers" class="fs-day-list">
+            <div v-if="dayDetailWorkers.length" class="fs-day-list-inner">
+              <div v-for="g in dayDetailWorkers" :key="g.craft" class="fs-day-wrow">
+                <span class="fs-day-wname">
+                  <i class="fs-chip-dot" :style="{ background: craftColor(g.craft) }"></i>
+                  {{ g.craft }}
+                </span>
+                <span class="fs-day-wchips">
+                  <span v-for="w in g.workers" :key="w.name" class="fs-day-wchip">
+                    {{ w.name }} <b>{{ fmt(w.valid) }}</b><em v-if="w.waste > 0" class="fs-day-cw">/{{ fmt(w.waste) }}</em>
+                  </span>
+                </span>
+              </div>
+            </div>
+            <div v-else class="fs-day-empty">暂无人员明细</div>
+          </div>
+          <div v-else class="fs-day-empty">加载人员明细…</div>
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- 加工单进度：点击卡片查看加工单详情 -->
+    <el-dialog v-model="billDlg" :title="billDetailTitle" width="600px" append-to-body align-center>
+      <div v-if="billDetail" class="fs-bill-detail">
+        <!-- 加工单信息卡 -->
+        <div class="fs-bill-d-card">
+          <div class="fs-bill-d-head">
+            <span class="fs-bill-d-goods" :title="billDetail.goodsName">{{ billDetail.goodsName || '—' }}</span>
+            <span class="fs-bill-tag" :class="billCls(billDetail)">{{ billLabel(billDetail) }}</span>
+          </div>
+          <div class="fs-bill-d-meta">
+            <span>{{ billDetail.code }} · {{ billDetail.htNo || '—' }}</span>
+            <span v-if="billDetail.spec">规格：{{ billDetail.spec }}</span>
+            <span>数量：{{ fmt(billDetail.num) }}{{ billDetail.unitName || '' }}</span>
+            <span>交期：{{ billDetail.deliveryDate || '—' }}</span>
+            <span v-if="billDetail.dueInDays !== null && billDetail.dueInDays !== undefined">
+              剩余 {{ billDetail.dueInDays < 0 ? '已逾期 ' + Math.abs(billDetail.dueInDays) + ' 天' : billDetail.dueInDays + ' 天' }}
+            </span>
+          </div>
+        </div>
+
+        <!-- 进度摘要：一张卡片内三列 -->
+        <div class="fs-bill-d-summary">
+          <div class="fs-bill-d-sum-cell">
+            <em class="fs-bill-d-sum-num is-primary">{{ billDetail.progressPercent }}%</em>
+            <span class="fs-bill-d-sum-label">整体进度</span>
+          </div>
+          <div class="fs-bill-d-sum-cell">
+            <em class="fs-bill-d-sum-num">{{ billDetail.doneCrafts }}/{{ billDetail.totalCrafts }}</em>
+            <span class="fs-bill-d-sum-label">工序完成</span>
+          </div>
+          <div class="fs-bill-d-sum-cell">
+            <em class="fs-bill-d-sum-num" :class="{ 'is-today': billDetail.todayReport }">{{ billDetail.todayReport ? billDetail.reportTimeText : '—' }}</em>
+            <span class="fs-bill-d-sum-label">今日报工</span>
+          </div>
+        </div>
+
+        <!-- 工序进度 -->
+        <div class="fs-bill-d-sec-title">工序进度</div>
+        <div class="fs-bill-d-list">
+          <div v-if="billDetail.crafts.length" class="fs-bill-d-list-inner">
+            <div v-for="(c, ci) in billDetail.crafts" :key="ci" class="fs-bill-d-row">
+              <i class="fs-chip-dot" :style="{ background: craftNameColor(c.craftName) }"></i>
+              <span class="fs-bill-d-craft">{{ c.craftName }}</span>
+              <span class="fs-bill-d-status" :class="'fs-ds' + c.status">{{ c.statusName || '—' }}</span>
+              <span class="fs-bill-d-bar"><i :style="{ width: Math.max(2, c.percent || 0) + '%', background: craftNameColor(c.craftName) }"></i></span>
+              <span class="fs-bill-d-num">
+                <b>良{{ fmt(c.validNum) }}</b>
+                <em v-if="c.wasteNum > 0" class="fs-bill-d-waste">废{{ fmt(c.wasteNum) }}</em>
+                <i class="fs-bill-d-total">/{{ fmt(c.num) }}</i>
+              </span>
+              <span class="fs-bill-d-pct">{{ c.percent || 0 }}%</span>
+            </div>
+          </div>
+          <div v-else class="fs-day-empty">暂无工序</div>
+        </div>
+      </div>
+    </el-dialog>
   </section>
 </template>
 
@@ -289,12 +446,26 @@
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { isDark as getDark, toggleTheme } from '../../../utils/theme'
 import api from '../../../api'
 
 const router = useRouter()
 
 const loading = ref(true)
 const refreshing = ref(false)
+
+/* ===== 深色模式切换（与全站 theme-toggle 一致） ===== */
+const isDark = ref(getDark())
+const themeAnim = ref(false)
+
+function onToggleTheme(e) {
+  themeAnim.value = false
+  requestAnimationFrame(() => {
+    themeAnim.value = true
+  })
+  window.setTimeout(() => (themeAnim.value = false), 500)
+  isDark.value = toggleTheme(e?.currentTarget)
+}
 
 /* ===== 加工单进度统计 ===== */
 const bpStats = reactive({ unprogrammed: 0, total: 0, inProgress: 0, craftActive: 0, noStart: 0, overdue: 0, dueSoon: 0 })
@@ -385,22 +556,31 @@ function fmt(n) {
 async function load() {
   loading.value = true
   try {
-    const [bp, ct, rs, rr] = await Promise.all([
+    const [bp, ct, rs, rr, bf] = await Promise.all([
       api.get('/tasks/bill-progress', { params: { page: 1, pageSize: 60, status: '1,2,5', sortBy: 'latestReport' } }),
       api.get('/tasks/craft-trend', { params: { days: 7 } }),
       api.get('/tasks/report-stats', { params: { days: 7 } }),
       api.get('/tasks/recent-reports', { params: { today: 1 } }),
+      api.get('/tasks/bill-forecast', { params: { page: 1, pageSize: 100 } }),
     ])
     Object.assign(bpStats, bp.stats || {})
+    // 完工预测结果按单号索引：预计完成日期 / 剩余天数 / 是否超交期（与预测页口径一致）
+    const fcMap = new Map((bf.list || []).map((f) => [f.code, f]))
     // 排序：正常进行中的单在前（今日报工优先），未编程/已暂停排最底
     const t = todayStr()
     const rank = (s) => (s === 1 || s === 5 ? 1 : 0)
     const bpList = [...(bp.list || [])].sort((a, b) => rank(a.status) - rank(b.status))
-    bills.value = bpList.map((b) => ({
-      ...b,
-      todayReport: (b.lastReportTime || '').slice(0, 10) === t,
-      reportTimeText: (b.lastReportTime || '').slice(11, 16),
-    }))
+    bills.value = bpList.map((b) => {
+      const fc = fcMap.get(b.code)
+      return {
+        ...b,
+        todayReport: (b.lastReportTime || '').slice(0, 10) === t,
+        reportTimeText: (b.lastReportTime || '').slice(11, 16),
+        etaDate: fc?.etaDate || null,
+        etaDays: fc?.etaDays ?? null,
+        overrunDelivery: !!fc?.overrunDelivery,
+      }
+    })
     trendDays.value = ct.daysList || []
     trendCrafts.value = (ct.crafts || []).map((c) => ({ name: c.name, valid: c.totals.valid, waste: c.totals.waste, cnt: c.totals.cnt, passRate: c.totals.passRate }))
     // 每日明细：按工序分色堆叠（segs 从下往上），废品叠加顶部
@@ -412,7 +592,7 @@ async function load() {
       ;(ct.crafts || []).forEach((c, ci) => {
         const p = c.points[i] || {}
         const v = p.valid || 0
-        if (v > 0) segs.push({ name: c.name, valid: v, color: fsColorOf(ci) })
+        if (v > 0 || p.waste > 0 || p.cnt > 0) segs.push({ name: c.name, valid: v, waste: p.waste || 0, cnt: p.cnt || 0, color: fsColorOf(ci) })
         valid += v
         waste += p.waste || 0
         cnt += p.cnt || 0
@@ -466,10 +646,26 @@ async function load() {
     }
   } finally {
     loading.value = false
-    // 数据就绪后启动自动轮播（今日报工人员，内容超出才滚动）
+    // 数据就绪后启动自动轮播（今日报工人员，内容超出才滚动；开关关闭时保持静止）
     await nextTick()
     watchFsSize()
-    startWorkersCarousel()
+    if (scrollEnabled.value) startWorkersCarousel()
+  }
+}
+
+/* ===== 滚动总开关：今日报工记录跑马灯 + 今日报工人员轮播 同步开启/暂停 ===== */
+// 开关状态跟随浏览器记忆（localStorage），刷新/重开页面保持上次设置
+const SCROLL_KEY = 'fs-scroll-enabled'
+const scrollEnabled = ref(localStorage.getItem(SCROLL_KEY) !== '0')
+function toggleScroll() {
+  scrollEnabled.value = !scrollEnabled.value
+  localStorage.setItem(SCROLL_KEY, scrollEnabled.value ? '1' : '0')
+  if (scrollEnabled.value) {
+    // 恢复滚动：重置端点停留计数，避免恢复后原地停顿
+    workersHold = 0
+    nextTick(() => startWorkersCarousel())
+  } else {
+    stopWorkersCarousel()
   }
 }
 
@@ -483,6 +679,8 @@ const CAROUSEL_HOLD = 90 // 端点停留约 1.5 秒（60fps）
 const WORKERS_SPEED = 0.4 // 人员列表每帧 0.4px（约 24px/s）
 
 function startWorkersCarousel() {
+  // 滚动总开关关闭时不启动（防止 mouseleave 等入口绕过开关重启）
+  if (!scrollEnabled.value) return
   const el = workersListEl.value
   if (!el || workersRaf) return
   // 重启时清零残留的端点停留计数，避免恢复滚动后原地停顿
@@ -568,6 +766,14 @@ function ringDash(percent) {
   return `${(RING_C * p) / 100} ${RING_C}`
 }
 
+/* 分段进度条：每个工序一段，宽度 = 该工序完成度 ÷ 工序总数 */
+function billSegWidth(c, b) {
+  const n = Number(b.totalCrafts) || 0
+  if (!n) return '0%'
+  const p = Math.max(0, Math.min(100, Number(c.percent) || 0))
+  return `${(p / n).toFixed(2)}%`
+}
+
 /* ===== 工序产出趋势 SVG 布局 ===== */
 const fsSvgEl = ref(null)
 const fsW = 500
@@ -609,6 +815,61 @@ function niceMax(v) {
 
 /* 每日明细：从原始 craft-trend points 聚合（良品+废品堆叠柱） */
 const dailySeries = ref([])
+
+/* 工序产出趋势：点击柱子查看当日明细（含各工序报工人员） */
+const dayDlg = ref(false)
+const dayDetail = ref(null)
+const dayDetailWorkers = ref(null) // [{ craft, workers: [{name, valid, waste, cnt}] }]
+const dayDetailTitle = computed(() => (dayDetail.value ? `${dayDetail.value.date} 产出明细` : '产出明细'))
+/** 工序良品数占当日总产出的百分比（用于进度条），防除零 */
+function dayPct(s) {
+  const total = (dayDetail.value?.valid || 0) + (dayDetail.value?.waste || 0)
+  if (!total) return '2%'
+  return Math.max(2, Math.round(((s.valid + s.waste) / total) * 100)) + '%'
+}
+/** 按工序名取趋势图颜色（用于报工人员区色点），找不到时用主题主色 */
+function craftColor(name) {
+  const s = dayDetail.value?.segs?.find((x) => x.name === name)
+  return s?.color || 'var(--primary)'
+}
+async function openDayDetail(d) {
+  dayDetail.value = d
+  dayDetailWorkers.value = null
+  dayDlg.value = true
+  try {
+    // 按日期拉取当天报工明细，按工序分组统计人员（良品/废品/次数）
+    const res = await api.get('/tasks/recent-reports', { params: { limit: 2000, date: d.date } })
+    const craftMap = new Map()
+    for (const r of res.list || []) {
+      const cn = r.craftName || '未知工序'
+      if (!craftMap.has(cn)) craftMap.set(cn, new Map())
+      const um = craftMap.get(cn)
+      const un = r.reportUserName || '未知'
+      if (!um.has(un)) um.set(un, { name: un, valid: 0, waste: 0, cnt: 0 })
+      const e = um.get(un)
+      e.valid += r.validNum || 0
+      e.waste += r.wasteNum || 0
+      e.cnt += 1
+    }
+    const arr = []
+    for (const [craft, um] of craftMap) {
+      arr.push({ craft, workers: [...um.values()].sort((a, b) => b.valid - a.valid || b.cnt - a.cnt) })
+    }
+    arr.sort((a, b) => (dayDetail.value.segs.findIndex((s) => s.name === a.craft) - dayDetail.value.segs.findIndex((s) => s.name === b.craft)))
+    dayDetailWorkers.value = arr
+  } catch {
+    dayDetailWorkers.value = []
+  }
+}
+
+/* 加工单进度：点击卡片查看加工单详情 */
+const billDlg = ref(false)
+const billDetail = ref(null)
+const billDetailTitle = computed(() => (billDetail.value ? billDetail.value.code : '加工单详情'))
+function openBillDetail(b) {
+  billDetail.value = b
+  billDlg.value = true
+}
 
 const stackMax = computed(() => {
   let m = 0
@@ -698,11 +959,11 @@ function startPolling(ms = 60000) {
 .fs-page {
   height: 100vh;
   overflow: hidden;
-  padding: 20px 24px 24px;
+  padding: 24px 28px 28px;
   background: var(--background);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
 }
 
 /* ===== 顶部栏 ===== */
@@ -731,7 +992,7 @@ function startPolling(ms = 60000) {
 
 .fs-title {
   margin: 0;
-  font-size: 22px;
+  font-size: 26px;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--foreground);
@@ -745,7 +1006,7 @@ function startPolling(ms = 60000) {
 }
 
 .fs-clock {
-  font-size: 14px;
+  font-size: 16px;
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
   font-family: 'SF Mono', 'JetBrains Mono', Consolas, monospace;
@@ -779,6 +1040,34 @@ function startPolling(ms = 60000) {
   border-color: var(--destructive);
 }
 
+/* 滚动总开关：与其他圆形图标按钮统一；开启=苹果绿 #34c759，关闭=灰色 */
+.fs-scroll-toggle {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  color: var(--muted-foreground);
+}
+.fs-scroll-toggle.on {
+  color: #34c759;
+  border-color: rgba(52, 199, 89, 0.5);
+}
+.fs-scroll-toggle.on:hover {
+  color: #34c759;
+  border-color: #34c759;
+  background: rgba(52, 199, 89, 0.08);
+}
+.fs-scroll-toggle.off {
+  opacity: 0.6;
+}
+.fs-scroll-toggle.off:hover {
+  opacity: 1;
+}
+
+/* 开关关闭时：今日报工记录的产品名跑马灯同步暂停 */
+.fs-scroll-off .fs-recent-goods-inner.is-run {
+  animation-play-state: paused;
+}
+
 @keyframes fs-spin {
   to {
     transform: rotate(360deg);
@@ -789,15 +1078,15 @@ function startPolling(ms = 60000) {
 .fs-kpis {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 12px;
+  gap: 14px;
 }
 
 .fs-kpi {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 16px 8px;
+  gap: 5px;
+  padding: 18px 10px;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--card);
@@ -822,7 +1111,7 @@ function startPolling(ms = 60000) {
 }
 
 .k-num {
-  font-size: 28px;
+  font-size: 34px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
@@ -830,7 +1119,7 @@ function startPolling(ms = 60000) {
 }
 
 .k-label {
-  font-size: 12px;
+  font-size: 13.5px;
   color: var(--muted-foreground);
 }
 
@@ -848,14 +1137,14 @@ function startPolling(ms = 60000) {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(260px, 0.7fr) minmax(0, 2.4fr) minmax(260px, 0.7fr);
-  gap: 16px;
+  gap: 18px;
   align-items: stretch;
 }
 
 .fs-col {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
   min-width: 0;
   min-height: 0;
   /* 左列整体限制在视口内，超出的内容在内部滚动 */
@@ -869,7 +1158,7 @@ function startPolling(ms = 60000) {
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--card);
-  padding: 16px;
+  padding: 18px;
 }
 
 /* 工序产出趋势面板：占据左列更多空间，图表尽可能放大展示 */
@@ -896,13 +1185,13 @@ function startPolling(ms = 60000) {
 }
 
 .fs-panel-title {
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 700;
   color: var(--foreground);
 }
 
 .fs-panel-sub {
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--muted-foreground);
 }
 
@@ -969,6 +1258,368 @@ function startPolling(ms = 60000) {
 .fs-craft-name {
   color: var(--foreground);
   font-weight: 600;
+}
+
+/* 工序产出趋势柱子：可点击查看当日明细 */
+.fs-trend-day {
+  cursor: pointer;
+}
+.fs-trend-day:hover rect {
+  filter: brightness(1.15);
+}
+
+/* 当日产出明细弹窗：统一分组卡片风格（Apple #007aff / #ef4444） */
+.fs-dlg-day .el-dialog__body {
+  padding-top: 6px;
+}
+
+.fs-day-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 76vh;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+/* 摘要：一张卡片内三列，竖线分隔 */
+.fs-day-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  background: var(--card, #fff);
+  border: 1px solid var(--border, rgba(148, 163, 184, 0.16));
+  border-radius: 14px;
+  overflow: hidden;
+}
+.fs-day-sum-cell {
+  padding: 16px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.fs-day-sum-cell + .fs-day-sum-cell {
+  border-left: 1px solid var(--border, rgba(148, 163, 184, 0.16));
+}
+.fs-day-sum-num {
+  font-style: normal;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+.fs-day-sum-num.is-primary {
+  color: #007aff;
+}
+.fs-day-sum-num.is-waste {
+  color: #ef4444;
+}
+.fs-day-sum-label {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+/* 分组标题：卡片外灰色小字 */
+.fs-day-sec-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  letter-spacing: 0.02em;
+  padding: 0 4px;
+  margin-bottom: 6px;
+}
+
+/* 统一卡片容器 */
+.fs-day-list {
+  border-radius: 14px;
+  background: var(--card, #fff);
+  border: 1px solid var(--border, rgba(148, 163, 184, 0.16));
+  padding: 4px 14px;
+}
+
+/* 工序行：色点 + 名称 + 占比条 + 数值组 */
+.fs-day-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  font-size: 14px;
+}
+.fs-day-row + .fs-day-row {
+  border-top: 1px solid var(--border, rgba(148, 163, 184, 0.14));
+}
+.fs-day-name {
+  font-weight: 600;
+  min-width: 52px;
+}
+.fs-day-bar {
+  flex: 1;
+  min-width: 40px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--muted, rgba(148, 163, 184, 0.2));
+  overflow: hidden;
+}
+.fs-day-bar-in {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.45s ease;
+}
+.fs-day-nums {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 96px;
+  justify-content: flex-end;
+}
+.fs-day-valid {
+  font-style: normal;
+  font-weight: 700;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+.fs-day-waste {
+  font-style: normal;
+  font-size: 12px;
+  color: #ef4444;
+  font-variant-numeric: tabular-nums;
+}
+.fs-day-cnt {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+/* 报工人员：工序色点 + 名称 + 人员胶囊 */
+.fs-day-wrow {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  font-size: 13px;
+}
+.fs-day-wrow + .fs-day-wrow {
+  border-top: 1px solid var(--border, rgba(148, 163, 184, 0.14));
+}
+.fs-day-wname {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  min-width: 76px;
+  flex-shrink: 0;
+  padding-top: 4px;
+}
+.fs-day-wchips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.fs-day-wchip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--muted, rgba(148, 163, 184, 0.08));
+  border: 1px solid var(--border, rgba(148, 163, 184, 0.14));
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+}
+.fs-day-wchip b {
+  font-weight: 600;
+}
+.fs-day-cw {
+  font-style: normal;
+  font-size: 11px;
+  color: #ef4444;
+}
+.fs-day-empty {
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+  text-align: center;
+  padding: 14px 0;
+}
+
+/* 加工单详情弹窗：与产出明细统一的分组卡片风格 */
+.fs-bill-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 76vh;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+/* 加工单信息卡 */
+.fs-bill-d-card {
+  background: var(--card, #fff);
+  border: 1px solid var(--border, rgba(148, 163, 184, 0.16));
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+.fs-bill-d-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.fs-bill-d-goods {
+  font-weight: 700;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.fs-bill-d-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border, rgba(148, 163, 184, 0.18));
+}
+
+/* 进度摘要：一张卡片内三列，竖线分隔 */
+.fs-bill-d-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  background: var(--card, #fff);
+  border: 1px solid var(--border, rgba(148, 163, 184, 0.16));
+  border-radius: 14px;
+  overflow: hidden;
+}
+.fs-bill-d-sum-cell {
+  padding: 14px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.fs-bill-d-sum-cell + .fs-bill-d-sum-cell {
+  border-left: 1px solid var(--border, rgba(148, 163, 184, 0.16));
+}
+.fs-bill-d-sum-num {
+  font-style: normal;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+.fs-bill-d-sum-num.is-primary {
+  color: #007aff;
+}
+.fs-bill-d-sum-num.is-today {
+  color: #10b981;
+}
+.fs-bill-d-sum-label {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+/* 工序进度：分组标题 + 统一卡片 */
+.fs-bill-d-sec-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  letter-spacing: 0.02em;
+  padding: 0 4px;
+  margin-bottom: 6px;
+}
+.fs-bill-d-list {
+  border-radius: 14px;
+  background: var(--card, #fff);
+  border: 1px solid var(--border, rgba(148, 163, 184, 0.16));
+  padding: 4px 14px;
+}
+.fs-bill-d-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  font-size: 13.5px;
+}
+.fs-bill-d-row + .fs-bill-d-row {
+  border-top: 1px solid var(--border, rgba(148, 163, 184, 0.14));
+}
+.fs-bill-d-craft {
+  font-weight: 600;
+  min-width: 44px;
+}
+.fs-bill-d-status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  min-width: 48px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.fs-ds1 {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.12);
+}
+.fs-ds2 {
+  color: var(--primary);
+  background: rgba(0, 122, 255, 0.12);
+}
+.fs-ds3 {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.12);
+}
+.fs-ds4 {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.14);
+}
+.fs-bill-d-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--muted, rgba(148, 163, 184, 0.2));
+  overflow: hidden;
+  min-width: 60px;
+}
+.fs-bill-d-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.45s ease;
+}
+.fs-bill-d-num {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+  white-space: nowrap;
+  min-width: 92px;
+  justify-content: flex-end;
+}
+.fs-bill-d-num b {
+  font-weight: 700;
+}
+.fs-bill-d-total {
+  font-style: normal;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.fs-bill-d-waste {
+  font-style: normal;
+  font-size: 11.5px;
+  color: #ef4444;
+}
+.fs-bill-d-pct {
+  min-width: 40px;
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .fs-craft-num {
@@ -1346,7 +1997,13 @@ function startPolling(ms = 60000) {
   border-radius: 12px;
   padding: 10px 12px;
   background: var(--background);
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  cursor: pointer;
+}
+
+.fs-bill:hover {
+  border-color: var(--primary);
+  transform: translateY(-1px);
 }
 
 .fs-bill.is-overdue {
@@ -1440,6 +2097,8 @@ function startPolling(ms = 60000) {
 
 .fs-bill-track {
   flex: 1;
+  display: flex;
+  gap: 1px;
   height: 6px;
   border-radius: 999px;
   background: var(--muted);
@@ -1449,7 +2108,7 @@ function startPolling(ms = 60000) {
 .fs-bill-track i {
   display: block;
   height: 100%;
-  background: var(--primary);
+  flex-shrink: 0;
   border-radius: 999px;
 }
 
@@ -1538,13 +2197,35 @@ function startPolling(ms = 60000) {
   text-overflow: ellipsis;
 }
 
-/* 报工时间行：今日报工高亮徽标 */
+/* 报工时间行：今日报工高亮徽标 + 右侧预计完成日期 */
 .fs-bill-report {
   margin-top: 8px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   min-width: 0;
   font-size: 10.5px;
+}
+
+.fs-bill-report-side {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.fs-bill-eta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  font-weight: 600;
+}
+
+.fs-bill-eta.risk {
+  color: var(--destructive, #ef4444);
 }
 
 .fs-bill-today {
