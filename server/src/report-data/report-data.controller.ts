@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ReportDataService } from './report-data.service';
 import { KgdAuthService } from '../kgd/kgd-auth.service';
+import { CraftsService } from '../crafts/crafts.service';
 import { ApiKeyGuard } from './api-key.guard';
 
 /**
@@ -16,6 +17,7 @@ export class ReportDataController {
   constructor(
     private readonly reportData: ReportDataService,
     private readonly kgdAuth: KgdAuthService,
+    private readonly craftsService: CraftsService,
   ) {}
 
   /** 统一成功/失败包装，与快工单 OpenAPI { success, data } 风格保持一致 */
@@ -108,6 +110,16 @@ export class ReportDataController {
         isEnable,
       ),
     );
+  }
+
+  /**
+   * 不良品项字典（code 编号 / name 名称）。
+   * 数据源：公版 Web /api/waste_item/list → 本地 kgd_waste_item 表缓存（内存 5 分钟 + 数据库 24h），
+   * 公版不可用时降级返回本地缓存。报工提交不良品时 waste_item_code 需传编号。
+   */
+  @Get('waste-items')
+  wasteItems() {
+    return this.wrap(() => this.craftsService.getWasteItems());
   }
 
   /**

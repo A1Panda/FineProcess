@@ -5,5 +5,6 @@ import { CraftsService } from './crafts.service';
 @Module({
   controllers: [CraftsController],
   providers: [CraftsService],
+  exports: [CraftsService],
 })
 export class CraftsModule {}
