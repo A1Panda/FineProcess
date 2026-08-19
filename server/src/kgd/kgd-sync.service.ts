@@ -591,7 +591,7 @@ export class KgdSyncService implements OnModuleInit {
 
     if (fullDue) {
       const { all, total } = await this.fetchGoodsStock();
-      await this.upsertGoodsStock(all);
+      const updated = await this.upsertGoodsStock(all);
       let cleaned = 0;
       if (total < 10_000 && all.length) {
         const ids = all.map((s: any) => s.id).filter((id: any) => id != null);
@@ -605,14 +605,14 @@ export class KgdSyncService implements OnModuleInit {
       }
       await this.syncMeta.upsert({ key: 'goods_stock_full_sync_at', value: now }, ['key']);
       await this.syncMeta.upsert({ key: 'goods_stock_last_sync', value: now }, ['key']);
-      this.logger.log(`库存同步完成(全量对账)：拉取 ${all.length} 条，清理 ${cleaned} 条，耗时 ${Date.now() - start}ms`);
+      this.logger.log(`库存同步完成(全量对账)：拉取 ${all.length} 条，更新 ${updated} 条，清理 ${cleaned} 条，耗时 ${Date.now() - start}ms`);
       return { pulled: all.length, cleaned };
     }
 
     const { all } = await this.fetchGoodsStock(minusSeconds(lastSync!, REPORT_OVERLAP_SEC));
-    await this.upsertGoodsStock(all);
+    const updated = await this.upsertGoodsStock(all);
     await this.syncMeta.upsert({ key: 'goods_stock_last_sync', value: now }, ['key']);
-    this.logger.log(`库存同步完成(增量)：拉取 ${all.length} 条，耗时 ${Date.now() - start}ms`);
+    this.logger.log(`库存同步完成(增量)：拉取 ${all.length} 条，更新 ${updated} 条，耗时 ${Date.now() - start}ms`);
     return { pulled: all.length, cleaned: 0 };
   }
 
@@ -629,10 +629,23 @@ export class KgdSyncService implements OnModuleInit {
     );
   }
 
-  /** 写入库存缓存（一条 = 商品×仓库；raw 保留快工单原始字段供本地过滤） */
-  private async upsertGoodsStock(all: any[]) {
-    if (!all.length) return;
-    const rows = all.map((s: any) => ({
+  /** 写入库存缓存（一条 = 商品×仓库；raw 保留快工单原始字段供本地过滤）。
+   *  公版库存接口不支持 updated_at 时间窗过滤（增量也会拉全量），因此先查本地存量 updatedAt 快照，
+   *  只 upsert 有变化的行，避免每次全量覆盖写。返回实际更新/新增条数 */
+  private async upsertGoodsStock(all: any[]): Promise<number> {
+    if (!all.length) return 0;
+    const stockIds = all.map((s: any) => s.id).filter((id: any) => id != null);
+    const local = stockIds.length
+      ? await this.goodsStock.find({ select: { stockId: true, updatedAt: true }, where: { stockId: In(stockIds) } })
+      : [];
+    const localMap = new Map(local.map((r) => [r.stockId, r.updatedAt ?? null]));
+    const changed = all.filter((s: any) => {
+      const prev = localMap.get(s.id);
+      if (prev === undefined) return true; // 本地不存在 → 新增
+      return (s.updated_at ?? null) !== prev; // updated_at 不同（含 null）→ 更新
+    });
+    if (!changed.length) return 0;
+    const rows = changed.map((s: any) => ({
       stockId: s.id,
       wareId: s.ware?.id ?? 0,
       wareName: s.ware?.name ?? '',
@@ -658,6 +671,7 @@ export class KgdSyncService implements OnModuleInit {
       raw: s,
     }));
     await this.goodsStock.upsert(rows, ['stockId']);
+    return changed.length;
   }
 
   /** 触发一次即时同步（写操作后 / 手动刷新时调用，可等待完成）。
