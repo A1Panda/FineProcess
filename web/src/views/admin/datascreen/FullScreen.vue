@@ -1182,17 +1182,24 @@ function startPolling(ms = 60000) {
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 12px;
+  white-space: nowrap;
 }
 
 .fs-panel-title {
   font-size: 17px;
   font-weight: 700;
   color: var(--foreground);
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .fs-panel-sub {
   font-size: 12.5px;
   color: var(--muted-foreground);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ===== SVG ===== */
