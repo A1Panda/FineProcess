@@ -321,6 +321,16 @@ export class KgdClientService {
     return { data: rows, count: rows.length };
   }
 
+  /**
+   * 公版 Web 商品库存列表（商品×仓库库存行，含 num/stock_total_num/可用数等）。
+   * OpenAPI 无库存接口，数据源为公版系统；支持 goods_keyword / ware_name / updated_at 等过滤。
+   */
+  async listWebGoodsStock(params: Record<string, unknown> = {}): Promise<{ data: any[]; count?: number }> {
+    const body = await this.webPost('/api/goods_stock/list', { pageNo: 1, pageSize: 200, ...params });
+    if (!body?.success) throw new Error(`公版商品库存列表失败: ${body?.msg ?? '未知错误'}`);
+    return { data: body.data ?? [], count: body.count };
+  }
+
   // ===== 用户 =====
 
   /** 用户列表 */

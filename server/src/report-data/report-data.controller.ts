@@ -1,13 +1,16 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ReportDataService } from './report-data.service';
 import { KgdAuthService } from '../kgd/kgd-auth.service';
+import { KgdClientService } from '../kgd/kgd-client.service';
 import { CraftsService } from '../crafts/crafts.service';
 import { ApiKeyGuard } from './api-key.guard';
 
 /**
- * 统一开放接口（日报数据源 + 浏览器扩展共用一套）：
+ * 统一开放接口（日报数据源 + 浏览器扩展 + 快工单 OpenAPI 全量映射共用一套）：
  * - 只读数据（GET 系列）：AstrBot 机器人插件、产品编码管理系统等外部服务消费
- * - 透传写接口（POST 系列）：「快工单合同导入建单」浏览器扩展等调用，由本系统统一登录并透传快工单
+ * - 透传写接口（POST 系列）：浏览器扩展、外部系统等调用，由本系统统一登录并透传快工单
+ * - 快工单 OpenAPI 全部 28 个业务接口均已在此映射（含仓库管理相关：其他出入库单/成品入库单/供应商/合同/上传附件）
  * 鉴权统一：Header `X-API-Key`（配置项 PLUGIN_API_KEY），无登录环节。
  * 响应统一：成功 { success: true, data }，失败 { success: false, msg }（与快工单 OpenAPI 风格一致）。
  */
@@ -17,6 +20,7 @@ export class ReportDataController {
   constructor(
     private readonly reportData: ReportDataService,
     private readonly kgdAuth: KgdAuthService,
+    private readonly kgdClient: KgdClientService,
     private readonly craftsService: CraftsService,
   ) {}
 
@@ -110,6 +114,25 @@ export class ReportDataController {
         isEnable,
       ),
     );
+  }
+
+  /**
+   * 商品库存（读本地缓存，查询前后台刷新）。
+   * 数据源为公版 Web /api/goods_stock/list（OpenAPI 无库存接口）；一条记录 = 商品×仓库。
+   * 筛选参数：
+   * - keyword：商品名/编号/规格模糊查询
+   * - wareName：仓库名称模糊查询
+   * - source：商品来源（1=自产 2=外协加工 3=外购）
+   * - isEnable：是否启用（1=启用 2=未启用）
+   */
+  @Get('goods-stock')
+  goodsStock(
+    @Query('keyword') keyword?: string,
+    @Query('wareName') wareName?: string,
+    @Query('source') source?: string,
+    @Query('isEnable') isEnable?: string,
+  ) {
+    return this.wrap(() => this.reportData.getGoodsStock(keyword, wareName, source, isEnable));
   }
 
   /**
@@ -245,5 +268,117 @@ export class ReportDataController {
   @Post('customer_contract/add')
   customerContractAdd(@Body() body: Record<string, unknown>) {
     return this.wrap(async () => (await this.reportData.addContract(body)).data);
+  }
+
+  // ===== 快工单 OpenAPI 全量映射（剩余接口透传） =====
+  // 以下全部为「系统统一登录 + 原样透传快工单」，返回数组（快工单 data 字段）。
+
+  /** 报工记录列表（透传 /open_api/report_work_record/list，Body 支持 pageNo/pageSize/时间窗口/加工单号过滤） */
+  @Post('reports/list')
+  reportList(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.listReportRecords(body)).data);
+  }
+
+  /** 新增报工记录（透传 /open_api/report_work_record/add，Body 为报工完整字段） */
+  @Post('reports/add')
+  reportAdd(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.addReportWorkRecord(body)).data);
+  }
+
+  /** 编辑报工记录（透传 /open_api/report_work_record/edit，仅可修改自己的未质检/未结算记录） */
+  @Post('reports/edit')
+  reportEdit(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.editReportWorkRecord(body)).data);
+  }
+
+  /** 用户列表（透传 /open_api/user/list 原样数据，Body 支持 keyword/pageNo/pageSize） */
+  @Post('user/list')
+  userList(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.listUsers(body)).data);
+  }
+
+  /** 客户新增（透传 /open_api/customer/add，Body 必填 name） */
+  @Post('customer/add')
+  customerAdd(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.addCustomer(body)).data);
+  }
+
+  /** 供应商列表（透传 /open_api/supplier/list，Body 支持 keyword/phone/pageNo/pageSize 等） */
+  @Post('supplier/list')
+  supplierList(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.listSuppliers(body)).data);
+  }
+
+  /** 供应商新增（透传 /open_api/supplier/add，Body 必填 name） */
+  @Post('supplier/add')
+  supplierAdd(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.addSupplier(body)).data);
+  }
+
+  /** 其他出库单列表（透传 /open_api/else_stock_out_bill/list，Body 支持时间窗口等过滤） */
+  @Post('else-stock-out/list')
+  elseStockOutList(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.listElseStockOutBills(body)).data);
+  }
+
+  /** 其他出库单新增（透传 /open_api/else_stock_out_bill/add，Body 为出库单完整字段） */
+  @Post('else-stock-out/add')
+  elseStockOutAdd(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.addElseStockOutBill(body)).data);
+  }
+
+  /** 其他入库单列表（透传 /open_api/else_stock_in_bill/list，Body 支持时间窗口等过滤） */
+  @Post('else-stock-in/list')
+  elseStockInList(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.listElseStockInBills(body)).data);
+  }
+
+  /** 其他入库单新增（透传 /open_api/else_stock_in_bill/add，Body 为入库单完整字段） */
+  @Post('else-stock-in/add')
+  elseStockInAdd(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.addElseStockInBill(body)).data);
+  }
+
+  /** 成品入库单列表（透传 /open_api/produce_stock_in_bill/list，Body 支持时间窗口等过滤） */
+  @Post('produce-stock-in/list')
+  produceStockInList(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.listProduceStockInBills(body)).data);
+  }
+
+  /** 成品入库单新增（透传 /open_api/produce_stock_in_bill/add，Body 为入库单完整字段） */
+  @Post('produce-stock-in/add')
+  produceStockInAdd(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.addProduceStockInBill(body)).data);
+  }
+
+  /** 合同列表（透传 /open_api/customer_contract/list，Body 支持 code/goods_keyword/时间窗口等过滤） */
+  @Post('contract/list')
+  contractList(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.listContracts(body)).data);
+  }
+
+  /** 合同新增（透传 /open_api/customer_contract/add，Body 为合同完整字段） */
+  @Post('contract/add')
+  contractAdd(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.addContract(body)).data);
+  }
+
+  /** 合同修改（透传 /open_api/customer_contract/edit，Body 必填 id + 待修改字段） */
+  @Post('contract/edit')
+  contractEdit(@Body() body: Record<string, unknown>) {
+    return this.wrap(async () => (await this.kgdClient.editContract(body)).data);
+  }
+
+  /**
+   * 上传附件（multipart/form-data，字段名 file；透传 /open_api/upload/file）。
+   * 返回 { original_name, url, file_size }，url 可用于其他接口的附件类型字段写入。
+   */
+  @Post('upload')
+  @UseInterceptors(FileInterceptor('file'))
+  upload(@UploadedFile() file: { buffer: Buffer; originalname: string }) {
+    return this.wrap(async () => {
+      if (!file) throw new Error('缺少上传文件（multipart 字段名应为 file）');
+      return this.kgdClient.uploadFile(file.buffer, file.originalname);
+    });
   }
 }

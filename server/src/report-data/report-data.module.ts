@@ -6,6 +6,7 @@ import { ApiKeyGuard } from './api-key.guard';
 import { KgdBillCache } from '../kgd/kgd-bill-cache.entity';
 import { KgdTaskCache } from '../kgd/kgd-task-cache.entity';
 import { KgdGoodsCache } from '../kgd/kgd-goods-cache.entity';
+import { KgdGoodsStockCache } from '../kgd/kgd-goods-stock-cache.entity';
 import { CraftsModule } from '../crafts/crafts.module';
 
 /**
@@ -14,7 +15,7 @@ import { CraftsModule } from '../crafts/crafts.module';
  * KgdClientService / KgdSyncService 由全局 KgdModule 提供。
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([KgdBillCache, KgdTaskCache, KgdGoodsCache]), CraftsModule],
+  imports: [TypeOrmModule.forFeature([KgdBillCache, KgdTaskCache, KgdGoodsCache, KgdGoodsStockCache]), CraftsModule],
   controllers: [ReportDataController],
   providers: [ReportDataService, ApiKeyGuard],
 })

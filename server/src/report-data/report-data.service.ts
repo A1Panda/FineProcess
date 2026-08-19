@@ -6,6 +6,7 @@ import { KgdSyncService } from '../kgd/kgd-sync.service';
 import { KgdBillCache } from '../kgd/kgd-bill-cache.entity';
 import { KgdTaskCache } from '../kgd/kgd-task-cache.entity';
 import { KgdGoodsCache } from '../kgd/kgd-goods-cache.entity';
+import { KgdGoodsStockCache } from '../kgd/kgd-goods-stock-cache.entity';
 
 const PAGE_SIZE = 100;
 const CONCURRENCY = 6; // 分页并发数（与同步服务实测一致）
@@ -40,6 +41,7 @@ export class ReportDataService {
     @InjectRepository(KgdBillCache) private readonly bills: Repository<KgdBillCache>,
     @InjectRepository(KgdTaskCache) private readonly tasks: Repository<KgdTaskCache>,
     @InjectRepository(KgdGoodsCache) private readonly goods: Repository<KgdGoodsCache>,
+    @InjectRepository(KgdGoodsStockCache) private readonly goodsStock: Repository<KgdGoodsStockCache>,
   ) {}
 
   /** 分页并发拉取指定接口全量数据 */
@@ -517,6 +519,106 @@ export class ReportDataService {
       fieldValues: Object.fromEntries(
         (((g.fieldValueList as unknown) ?? []) as any[]).map((f: any) => [f.name, f.value ?? '']),
       ),
+    }));
+  }
+
+  /**
+   * 商品库存（读本地缓存 kgd_goods_stock_cache，由 KgdSyncService 定时 + 查询后台刷新）。
+   * 数据源为公版 Web /api/goods_stock/list（OpenAPI 无库存接口）。
+   * 支持按商品名称/编号/规格（keyword）、仓库（wareName）、来源（source）、启用状态（isEnable）筛选。
+   */
+  async getGoodsStock(keyword?: string, wareName?: string, source?: string, isEnable?: string) {
+    let cached = await this.goodsStock.find();
+    if (!cached.length) {
+      // 缓存未就绪（如刚启动）：实时拉公版一次兜底并写入缓存
+      try {
+        const records: any[] = [];
+        const PAGE = 200;
+        for (let page = 1; ; page++) {
+          const { data, count } = await this.kgdClient.listWebGoodsStock({ pageNo: page, pageSize: PAGE });
+          const rows = data ?? [];
+          records.push(...rows);
+          if (rows.length < PAGE || page * PAGE >= Math.min(count ?? records.length, 10_000)) break;
+        }
+        if (records.length) {
+          const rows = records.map((s: any) => ({
+            stockId: s.id,
+            wareId: s.ware?.id ?? 0,
+            wareName: s.ware?.name ?? '',
+            goodsId: s.goods?.id ?? 0,
+            goodsCode: s.goods?.code ?? '',
+            goodsName: s.goods?.name ?? '',
+            goodsStandard: s.goods?.standard ?? '',
+            unitName: s.goods?.unit?.name ?? '',
+            source: Number(s.goods?.source ?? 0),
+            sourceName: s.goods?.source_name ?? '',
+            categoryPathNames: s.goods?.category_path_names ?? '',
+            num: String(s.num ?? '0'),
+            wasteNum: String(s.waste_num ?? '0'),
+            stockTotalNum: String(s.stock_total_num ?? '0'),
+            stockTotalWasteNum: String(s.stock_total_waste_num ?? '0'),
+            stockTotalAvailableNum: String(s.stock_total_available_num ?? '0'),
+            lockStockNum: String(s.lock_stock_num ?? '0'),
+            purchaseInTransitNum: String(s.purchase_in_transit_num ?? '0'),
+            lowLimit: s.low_limit != null ? String(s.low_limit) : null,
+            upperLimit: s.upper_limit != null ? String(s.upper_limit) : null,
+            updatedAt: s.updated_at ?? null,
+            fieldValueList: s.fieldValueList ?? [],
+            raw: s,
+          }));
+          await this.goodsStock.upsert(rows, ['stockId']);
+          cached = this.goodsStock.create(rows) as unknown as KgdGoodsStockCache[];
+        }
+      } catch (e) {
+        this.logger.warn(`库存缓存未就绪时实时拉取失败: ${(e as Error).message}`);
+      }
+    } else {
+      // 后台同步刷新缓存（30 秒节流），不阻塞查询
+      this.sync
+        .requestSync(false, 0, ReportDataService.SYNC_THROTTLE_MS)
+        .catch((e) => this.logger.warn(`库存查询后台同步失败: ${(e as Error).message}`));
+    }
+
+    const kw = (keyword ?? '').trim().toLowerCase();
+    const ware = (wareName ?? '').trim().toLowerCase();
+    const src = (source ?? '').trim();
+    const enb = (isEnable ?? '').trim();
+
+    const list = cached.filter((s) => {
+      if (kw) {
+        const fields = [s.goodsName ?? '', s.goodsCode ?? '', s.goodsStandard ?? ''].join(' ').toLowerCase();
+        if (!fields.includes(kw)) return false;
+      }
+      if (ware && !String(s.wareName ?? '').toLowerCase().includes(ware)) return false;
+      if (src && String(s.source) !== src) return false;
+      if (enb) {
+        const raw = (s.raw ?? {}) as any;
+        const goodsEnable = raw.goods?.is_enable;
+        if (goodsEnable != null && String(goodsEnable) !== enb) return false;
+      }
+      return true;
+    });
+
+    return list.map((s) => ({
+      id: s.stockId,
+      wareId: s.wareId,
+      wareName: s.wareName,
+      goodsId: s.goodsId,
+      goodsCode: s.goodsCode,
+      goodsName: s.goodsName,
+      goodsStandard: s.goodsStandard,
+      unitName: s.unitName,
+      source: Number(s.source ?? 0),
+      sourceName: s.sourceName,
+      categoryPathNames: s.categoryPathNames ?? '',
+      num: s.num,
+      wasteNum: s.wasteNum,
+      stockTotalNum: s.stockTotalNum,
+      stockTotalWasteNum: s.stockTotalWasteNum,
+      stockTotalAvailableNum: s.stockTotalAvailableNum,
+      lockStockNum: s.lockStockNum,
+      purchaseInTransitNum: s.purchaseInTransitNum,
+      updatedAt: s.updatedAt ?? null,
     }));
   }
 

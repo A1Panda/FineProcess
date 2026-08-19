@@ -8,6 +8,7 @@ import { KgdClientService } from './kgd-client.service';
 import { KgdBillCache } from './kgd-bill-cache.entity';
 import { KgdTaskCache } from './kgd-task-cache.entity';
 import { KgdGoodsCache } from './kgd-goods-cache.entity';
+import { KgdGoodsStockCache } from './kgd-goods-stock-cache.entity';
 import { KgdReportCache } from '../report/kgd-report-cache.entity';
 import { User } from '../auth/users.entity';
 import { KgdSyncMeta } from './kgd-sync-meta.entity';
@@ -21,6 +22,7 @@ const REPORT_RECENT_DAYS = 3; // 手动刷新（短按增量）时报工覆盖�
 const BILL_FULL_RECONCILE_SEC = 24 * 60 * 60; // 加工单全量对账间隔：每天一次（长按刷新可强制触发）
 const TASK_FULL_RECONCILE_SEC = 24 * 60 * 60; // 任务全量对账间隔：每天一次（长按刷新可强制触发）
 const GOODS_FULL_RECONCILE_SEC = 24 * 60 * 60; // 商品全量对账间隔：每天一次
+const GOODS_STOCK_FULL_RECONCILE_SEC = 24 * 60 * 60; // 商品库存全量对账间隔：每天一次
 /** 滚动同步只拉活动状态（已完成/已取消的历史数据由全量对账刷新）：加工单 未开始(1)+生产中(2) */
 const BILL_ACTIVE_STATUSES = [1, 2, 5]; // 加工单活动状态：1=未开始 2=进行中 5=已暂停（5 纳入增量，缓存才能及时反映暂停；前端仍按 1,2 过滤显示）
 /** 任务活动状态：未开始(1)+进行中(2)+已暂停(4) */
@@ -92,6 +94,7 @@ export class KgdSyncService implements OnModuleInit {
     @InjectRepository(KgdBillCache) private readonly bills: Repository<KgdBillCache>,
     @InjectRepository(KgdTaskCache) private readonly tasks: Repository<KgdTaskCache>,
     @InjectRepository(KgdGoodsCache) private readonly goods: Repository<KgdGoodsCache>,
+    @InjectRepository(KgdGoodsStockCache) private readonly goodsStock: Repository<KgdGoodsStockCache>,
     @InjectRepository(KgdReportCache) private readonly reportCache: Repository<KgdReportCache>,
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(KgdSyncMeta) private readonly syncMeta: Repository<KgdSyncMeta>,
@@ -140,6 +143,7 @@ export class KgdSyncService implements OnModuleInit {
       { name: '任务', run: () => this.syncTasks(forceFull, reportWindowDays) },
       { name: '报工记录', run: () => this.syncReportRecords(forceFull, reportWindowDays) },
       { name: '商品', run: () => this.syncGoods(forceFull) },
+      { name: '库存', run: () => this.syncGoodsStock(forceFull) },
       { name: '用户', run: () => this.syncUsers() },
     ];
     // allSettled：单模块失败（如公版限流）不影响其他模块，汇总日志逐项标注成败；
@@ -560,6 +564,87 @@ export class KgdSyncService implements OnModuleInit {
       raw: g,
     }));
     await this.goods.upsert(rows, ['goodsId']);
+  }
+
+  /**
+   * 商品库存滚动同步：数据源为公版 Web /api/goods_stock/list（OpenAPI 无库存接口）。
+   * - 全量对账：首次 / 距上次对账超过 GOODS_STOCK_FULL_RECONCILE_SEC / forceFull 时执行，
+   *   全量拉取（约 1.3k 行，14 页）后覆盖写入，并清理远程已删除的库存行（总量 1.3k 无截断风险）
+   * - 增量：以 goods_stock_last_sync 为游标按 updated_at 窗口拉取（公版 updated_at 过滤可能退化为全量，
+   *   覆盖写入无害；删除清理只发生在全量对账分支）
+   */
+  private async syncGoodsStock(forceFull = false): Promise<SyncStat> {
+    const start = Date.now();
+    const now = fmtDateTime(new Date());
+    const lastSync = this.metaCache.get('goods_stock_last_sync') ?? null;
+    const fullDue = forceFull || !lastSync || this.fullDue('goods_stock_full_sync_at', now, GOODS_STOCK_FULL_RECONCILE_SEC);
+
+    if (fullDue) {
+      const { all, total } = await this.fetchGoodsStock();
+      await this.upsertGoodsStock(all);
+      let cleaned = 0;
+      if (total < 10_000 && all.length) {
+        const ids = all.map((s: any) => s.id).filter((id: any) => id != null);
+        const del = await this.goodsStock
+          .createQueryBuilder()
+          .delete()
+          .where('stockId NOT IN (:...ids)', { ids })
+          .execute();
+        cleaned = del.affected ?? 0;
+        if (cleaned) this.logger.log(`库存缓存清理完成：删除本地已失效 ${cleaned} 条`);
+      }
+      await this.syncMeta.upsert({ key: 'goods_stock_full_sync_at', value: now }, ['key']);
+      await this.syncMeta.upsert({ key: 'goods_stock_last_sync', value: now }, ['key']);
+      this.logger.log(`库存同步完成(全量对账)：拉取 ${all.length} 条，清理 ${cleaned} 条，耗时 ${Date.now() - start}ms`);
+      return { pulled: all.length, cleaned };
+    }
+
+    const { all } = await this.fetchGoodsStock(minusSeconds(lastSync!, REPORT_OVERLAP_SEC));
+    await this.upsertGoodsStock(all);
+    await this.syncMeta.upsert({ key: 'goods_stock_last_sync', value: now }, ['key']);
+    this.logger.log(`库存同步完成(增量)：拉取 ${all.length} 条，耗时 ${Date.now() - start}ms`);
+    return { pulled: all.length, cleaned: 0 };
+  }
+
+  /** 分页拉取商品库存（公版 /api/goods_stock/list；updatedAtStart 非空时按 updated_at 窗口拉取） */
+  private async fetchGoodsStock(updatedAtStart?: string): Promise<{ all: any[]; total: number }> {
+    const params: Record<string, unknown> = {};
+    if (updatedAtStart) {
+      params.updated_at_start = updatedAtStart;
+      params.updated_at_end = fmtDateTime(new Date());
+    }
+    return this.fetchPaged((pageNo) => this.kgdClient.listWebGoodsStock({ pageNo, pageSize: PAGE_SIZE, ...params }));
+  }
+
+  /** 写入库存缓存（一条 = 商品×仓库；raw 保留快工单原始字段供本地过滤） */
+  private async upsertGoodsStock(all: any[]) {
+    if (!all.length) return;
+    const rows = all.map((s: any) => ({
+      stockId: s.id,
+      wareId: s.ware?.id ?? 0,
+      wareName: s.ware?.name ?? '',
+      goodsId: s.goods?.id ?? 0,
+      goodsCode: s.goods?.code ?? '',
+      goodsName: s.goods?.name ?? '',
+      goodsStandard: s.goods?.standard ?? '',
+      unitName: s.goods?.unit?.name ?? '',
+      source: Number(s.goods?.source ?? 0),
+      sourceName: s.goods?.source_name ?? '',
+      categoryPathNames: s.goods?.category_path_names ?? '',
+      num: String(s.num ?? '0'),
+      wasteNum: String(s.waste_num ?? '0'),
+      stockTotalNum: String(s.stock_total_num ?? '0'),
+      stockTotalWasteNum: String(s.stock_total_waste_num ?? '0'),
+      stockTotalAvailableNum: String(s.stock_total_available_num ?? '0'),
+      lockStockNum: String(s.lock_stock_num ?? '0'),
+      purchaseInTransitNum: String(s.purchase_in_transit_num ?? '0'),
+      lowLimit: s.low_limit != null ? String(s.low_limit) : null,
+      upperLimit: s.upper_limit != null ? String(s.upper_limit) : null,
+      updatedAt: s.updated_at ?? null,
+      fieldValueList: s.fieldValueList ?? [],
+      raw: s,
+    }));
+    await this.goodsStock.upsert(rows, ['stockId']);
   }
 
   /** 触发一次即时同步（写操作后 / 手动刷新时调用，可等待完成）。
