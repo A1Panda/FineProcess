@@ -23,6 +23,8 @@ const BILL_FULL_RECONCILE_SEC = 24 * 60 * 60; // 加工单全量对账间隔：�
 const TASK_FULL_RECONCILE_SEC = 24 * 60 * 60; // 任务全量对账间隔：每天一次（长按刷新可强制触发）
 const GOODS_FULL_RECONCILE_SEC = 24 * 60 * 60; // 商品全量对账间隔：每天一次
 const GOODS_STOCK_FULL_RECONCILE_SEC = 24 * 60 * 60; // 商品库存全量对账间隔：每天一次
+const GOODS_STOCK_PAGE_SIZE = 200; // 商品库存每页条数（公版实测 pageSize 200 有效，1.3k 行约 7 页）
+const GOODS_STOCK_MIN_SYNC_SEC = 5 * 60; // 商品库存最小同步间隔：非全量场景距上次同步不足此时长直接跳过，避免查询高频触发对公版的重复全量拉取
 /** 滚动同步只拉活动状态（已完成/已取消的历史数据由全量对账刷新）：加工单 未开始(1)+生产中(2) */
 const BILL_ACTIVE_STATUSES = [1, 2, 5]; // 加工单活动状态：1=未开始 2=进行中 5=已暂停（5 纳入增量，缓存才能及时反映暂停；前端仍按 1,2 过滤显示）
 /** 任务活动状态：未开始(1)+进行中(2)+已暂停(4) */
@@ -579,6 +581,14 @@ export class KgdSyncService implements OnModuleInit {
     const lastSync = this.metaCache.get('goods_stock_last_sync') ?? null;
     const fullDue = forceFull || !lastSync || this.fullDue('goods_stock_full_sync_at', now, GOODS_STOCK_FULL_RECONCILE_SEC);
 
+    // 低频刷新：非全量场景距上次同步不足 GOODS_STOCK_MIN_SYNC_SEC 直接跳过（库存实时性要求不高，避免高频查询重复打公版）
+    if (!fullDue && lastSync) {
+      const lastMs = new Date(lastSync.replace(' ', 'T')).getTime();
+      if (Number.isFinite(lastMs) && Date.now() - lastMs < GOODS_STOCK_MIN_SYNC_SEC * 1000) {
+        return { pulled: 0, cleaned: 0 };
+      }
+    }
+
     if (fullDue) {
       const { all, total } = await this.fetchGoodsStock();
       await this.upsertGoodsStock(all);
@@ -613,7 +623,10 @@ export class KgdSyncService implements OnModuleInit {
       params.updated_at_start = updatedAtStart;
       params.updated_at_end = fmtDateTime(new Date());
     }
-    return this.fetchPaged((pageNo) => this.kgdClient.listWebGoodsStock({ pageNo, pageSize: PAGE_SIZE, ...params }));
+    return this.fetchPaged(
+      (pageNo) => this.kgdClient.listWebGoodsStock({ pageNo, pageSize: GOODS_STOCK_PAGE_SIZE, ...params }),
+      GOODS_STOCK_PAGE_SIZE,
+    );
   }
 
   /** 写入库存缓存（一条 = 商品×仓库；raw 保留快工单原始字段供本地过滤） */
@@ -849,12 +862,13 @@ export class KgdSyncService implements OnModuleInit {
    */
   private async fetchPaged(
     fetcher: (pageNo: number) => Promise<{ data: any[]; count?: number }>,
+    pageSize = PAGE_SIZE,
   ): Promise<{ all: any[]; total: number }> {
     const first = await fetcher(1);
     const firstList = first.data ?? [];
     const total = Math.min(first.count ?? firstList.length, 10_000);
     const all = [...firstList];
-    const pageCount = Math.ceil(total / PAGE_SIZE);
+    const pageCount = Math.ceil(total / pageSize);
     let next = 2;
     const worker = async () => {
       while (next <= pageCount) {

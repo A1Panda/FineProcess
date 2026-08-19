@@ -530,16 +530,25 @@ export class ReportDataService {
   async getGoodsStock(keyword?: string, wareName?: string, source?: string, isEnable?: string) {
     let cached = await this.goodsStock.find();
     if (!cached.length) {
-      // 缓存未就绪（如刚启动）：实时拉公版一次兜底并写入缓存
+      // 缓存未就绪（如刚启动）：实时拉公版一次兜底并写入缓存（分页并发，缩短首查耗时）
       try {
         const records: any[] = [];
         const PAGE = 200;
-        for (let page = 1; ; page++) {
-          const { data, count } = await this.kgdClient.listWebGoodsStock({ pageNo: page, pageSize: PAGE });
-          const rows = data ?? [];
-          records.push(...rows);
-          if (rows.length < PAGE || page * PAGE >= Math.min(count ?? records.length, 10_000)) break;
-        }
+        const first = await this.kgdClient.listWebGoodsStock({ pageNo: 1, pageSize: PAGE });
+        const firstRows = first.data ?? [];
+        records.push(...firstRows);
+        const total = Math.min(first.count ?? firstRows.length, 10_000);
+        const pageCount = Math.ceil(total / PAGE);
+        let next = 2;
+        await Promise.all(
+          Array.from({ length: 4 }, async () => {
+            while (next <= pageCount) {
+              const pageNo = next++;
+              const { data } = await this.kgdClient.listWebGoodsStock({ pageNo, pageSize: PAGE });
+              if (data?.length) records.push(...data);
+            }
+          }),
+        );
         if (records.length) {
           const rows = records.map((s: any) => ({
             stockId: s.id,
