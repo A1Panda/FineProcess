@@ -4,7 +4,7 @@
     <header class="fs-top">
       <div class="fs-brand">
         <span class="fs-dot"></span>
-        <h1 class="fs-title">快工单生产数据大屏</h1>
+        <h1 class="fs-title">青岛航天石墨生产数据大屏</h1>
       </div>
       <div class="fs-top-right">
         <span class="fs-clock">{{ clockText }}</span>
