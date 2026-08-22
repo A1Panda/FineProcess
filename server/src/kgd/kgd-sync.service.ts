@@ -12,6 +12,7 @@ import { KgdGoodsStockCache } from './kgd-goods-stock-cache.entity';
 import { KgdReportCache } from '../report/kgd-report-cache.entity';
 import { User } from '../auth/users.entity';
 import { KgdSyncMeta } from './kgd-sync-meta.entity';
+import { KgdWasteItem } from './kgd-waste-item.entity';
 
 const PAGE_SIZE = 100;
 const CONCURRENCY = 6; // 分页并发数：实测串行 41 页 28s，并发 6 约 5s，并发 8 约 4s
@@ -100,6 +101,7 @@ export class KgdSyncService implements OnModuleInit {
     @InjectRepository(KgdReportCache) private readonly reportCache: Repository<KgdReportCache>,
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(KgdSyncMeta) private readonly syncMeta: Repository<KgdSyncMeta>,
+    @InjectRepository(KgdWasteItem) private readonly wasteItems: Repository<KgdWasteItem>,
   ) {}
 
   onModuleInit() {
@@ -147,6 +149,8 @@ export class KgdSyncService implements OnModuleInit {
       { name: '商品', run: () => this.syncGoods(forceFull) },
       { name: '库存', run: () => this.syncGoodsStock(forceFull) },
       { name: '用户', run: () => this.syncUsers() },
+      // 不良品项字典：公版定义可能调整，仅长按刷新（全量对账）时同步，平时报工弹窗按需拉取
+      ...(forceFull ? [{ name: '不良品项', run: () => this.syncWasteItems() }] : []),
     ];
     // allSettled：单模块失败（如公版限流）不影响其他模块，汇总日志逐项标注成败；
     // 失败模块进入冷却（连续失败暂停重试），避免限流期间每 5 分钟持续撞墙
@@ -246,6 +250,26 @@ export class KgdSyncService implements OnModuleInit {
     }
     this.logger.log(`用户同步完成：新增 ${created}，更新岗位 ${updated}，耗时 ${Date.now() - start}ms`);
     return { pulled: created + updated, cleaned: 0 };
+  }
+
+  /** 不良品项字典同步：覆盖式拉取公版定义刷新本地缓存（仅长按刷新时调用）。
+   *  与报工弹窗按需拉取共用一张缓存表；此处更新 synced_at，使按需拉取在其 24h 有效期内直接读库 */
+  private async syncWasteItems(): Promise<SyncStat> {
+    const start = Date.now();
+    const { data } = await this.kgdClient.listWebWasteItems();
+    const fetched = (data ?? [])
+      .filter((w: any) => w?.code != null && w?.name != null)
+      .map((w: any) => ({ code: String(w.code), name: String(w.name) }));
+    let pulled = 0;
+    if (fetched.length) {
+      await this.wasteItems.upsert(
+        fetched.map((f) => ({ code: f.code, name: f.name, syncedAt: new Date() })),
+        ['code'],
+      );
+      pulled = fetched.length;
+    }
+    this.logger.log(`不良品项同步完成：拉取 ${pulled} 条，耗时 ${Date.now() - start}ms`);
+    return { pulled, cleaned: 0 };
   }
 
   /**
