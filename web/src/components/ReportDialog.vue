@@ -2,7 +2,7 @@
   <el-dialog
     v-model="visible"
     width="92%"
-    :style="{ maxWidth: '420px' }"
+    class="report-dlg"
     destroy-on-close
   >
     <!-- 自定义标题：报工 + 工序徽章 -->
@@ -57,7 +57,7 @@
         </el-form-item>
       </div>
       <!-- 不良品项（选填）：用户主动勾选要填报的项，避免一长串输入框 -->
-      <el-form-item v-if="wasteItemNames.length" label="不良品项（选填）">
+      <el-form-item v-if="wasteItemNames.length" label="不良品项（选填）" class="field-full">
         <div class="waste-items">
           <!-- 未展开：添加入口 -->
           <template v-if="!wastePicking">
@@ -447,6 +447,40 @@ async function submit() {
 .report-form {
   /* 滚动交给弹窗 body 统一处理，避免嵌套滚动 */
   padding: 2px;
+}
+
+/* ===== 桌面端适配 ===== */
+.report-dlg {
+  max-width: 420px;
+}
+
+@media (min-width: 768px) {
+  .report-dlg {
+    max-width: 560px;
+  }
+
+  /* 表单两栏：报工人 / 良品 / 不良品 并排，减少竖向滚动 */
+  .report-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 16px;
+  }
+
+  .report-form :deep(.el-form-item) {
+    margin-bottom: 14px;
+  }
+
+  .report-form .field-full {
+    grid-column: 1 / -1;
+  }
+
+  .report-form .field-row {
+    display: contents;
+  }
+
+  .waste-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
 }
 
 .report-form :deep(.el-form-item) {

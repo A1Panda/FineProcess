@@ -239,6 +239,17 @@ onMounted(loadProfile)
   gap: 14px;
 }
 
+/* ===== 桌面端适配：信息 + 密码双栏 ===== */
+@media (min-width: 768px) {
+  .content {
+    max-width: 900px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+}
+
 /* ===== 卡片面板 ===== */
 .panel {
   background: var(--card);

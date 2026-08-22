@@ -402,4 +402,11 @@ onMounted(loadUsers)
     background: transparent;
   }
 }
+
+/* ===== 超宽桌面端：三列网格卡片 ===== */
+@media (min-width: 1280px) {
+  .user-panel {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
 </style>

@@ -93,20 +93,21 @@
           <span class="task-count">共 {{ total }} 单</span>
         </div>
 
-        <el-input
-          v-model="keyword"
-          class="task-search"
-          size="large"
-          clearable
-          placeholder="搜索 HT图号 / 产品名"
-          @input="onSearchInput"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
+        <div class="task-toolbar">
+          <el-input
+            v-model="keyword"
+            class="task-search"
+            size="large"
+            clearable
+            placeholder="搜索 HT图号 / 产品名"
+            @input="onSearchInput"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
 
-        <div class="seg-control">
+          <div class="seg-control">
           <button
             v-for="t in tabs"
             :key="t.key"
@@ -117,6 +118,7 @@
             {{ t.label }}
             <span class="seg-count">{{ tabCount(t) }}</span>
           </button>
+          </div>
         </div>
 
         <el-skeleton v-if="firstLoad" :rows="3" animated />
@@ -515,7 +517,7 @@ onMounted(() => {
 }
 
 .header-inner {
-  max-width: 1024px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 12px 16px 10px;
   display: flex;
@@ -941,6 +943,54 @@ onMounted(() => {
 
   .task-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ===== 桌面端适配 ===== */
+@media (min-width: 1024px) {
+  .content {
+    max-width: 1200px;
+  }
+
+  .task-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .task-toolbar .task-search {
+    flex: 0 0 340px;
+    margin-top: 14px;
+  }
+
+  .task-toolbar .seg-control {
+    flex: 1;
+    margin-top: 14px;
+  }
+
+  .ov-block {
+    padding: 26px 12px;
+  }
+
+  .ov-val {
+    font-size: 34px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .craft-grid {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+
+  .task-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (hover: hover) {
+  .craft-card:hover {
+    border-color: rgba(0, 122, 255, 0.35);
+    box-shadow: 0 6px 20px -10px rgba(0, 0, 0, 0.15);
   }
 }
 

@@ -3,7 +3,7 @@
     v-model="visible"
     :title="`报工记录 · ${props.task?.produceBillCode || ''}`"
     width="92%"
-    :style="{ maxWidth: '520px' }"
+    class="records-dlg"
     append-to-body
     destroy-on-close
   >
@@ -514,6 +514,46 @@ async function saveEdit() {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* ===== 桌面端适配 ===== */
+:deep(.records-dlg) {
+  max-width: 520px;
+}
+
+@media (min-width: 768px) {
+  :deep(.records-dlg) {
+    max-width: 860px;
+  }
+
+  /* 记录行紧凑化：标题行 + 副信息/统计并排 */
+  .record-item {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    column-gap: 18px;
+    align-items: center;
+    padding: 10px 14px;
+  }
+
+  .record-item .row-top {
+    grid-column: 1 / -1;
+  }
+
+  .record-item .row-sub {
+    margin: 0;
+  }
+
+  .record-item .row-nums {
+    margin-top: 0;
+    justify-content: flex-end;
+    padding: 6px 14px;
+  }
+
+  .record-item .waste-detail,
+  .record-item .row-meta,
+  .record-item .edit-panel {
+    grid-column: 1 / -1;
+  }
 }
 
 .record-item {

@@ -257,4 +257,26 @@ onMounted(() => {
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }
+
+/* ===== 桌面端适配 ===== */
+@media (min-width: 768px) {
+  .login-inner {
+    max-width: 440px;
+  }
+
+  .brand-logo {
+    width: 84px;
+    height: 84px;
+    border-radius: 22px;
+  }
+
+  .title {
+    font-size: 26px;
+  }
+
+  .login-card {
+    padding: 32px 28px 24px;
+    box-shadow: 0 12px 40px -12px rgba(0, 0, 0, 0.12);
+  }
+}
 </style>

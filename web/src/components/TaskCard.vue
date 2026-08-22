@@ -411,6 +411,14 @@ function copyCode() {
   transform: scale(0.985);
 }
 
+/* 桌面端：悬停高亮 */
+@media (hover: hover) {
+  .task-card:hover {
+    border-color: rgba(0, 122, 255, 0.35);
+    box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.18);
+  }
+}
+
 .card-top {
   display: flex;
   align-items: center;

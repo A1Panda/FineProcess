@@ -211,7 +211,7 @@ function onToggleTheme(e) {
 }
 
 .header-inner {
-  max-width: 1024px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 12px 16px 10px;
   display: flex;
@@ -298,7 +298,7 @@ function onToggleTheme(e) {
 
 /* ===== 移动端分段控件导航 ===== */
 .seg-nav {
-  max-width: 1024px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 0 16px 10px;
 }
@@ -336,7 +336,7 @@ function onToggleTheme(e) {
 
 /* ===== 桌面端布局 ===== */
 .admin-body {
-  max-width: 1024px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 20px 16px 32px;
 }

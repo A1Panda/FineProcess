@@ -22,19 +22,20 @@
     <div class="content">
       <!-- 编程工序：Tab 切换模式（加工单状态分类） -->
       <template v-if="isBiancheng">
-        <el-input
-          v-model="keyword"
-          class="task-search"
-          size="large"
-          clearable
-          placeholder="搜索 HT图号 / 产品名"
-          @input="onSearchInput"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
-        <div class="seg-control">
+        <div class="task-toolbar">
+          <el-input
+            v-model="keyword"
+            class="task-search"
+            size="large"
+            clearable
+            placeholder="搜索 HT图号 / 产品名"
+            @input="onSearchInput"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+          <div class="seg-control">
           <button
             v-for="t in bianchengTabs"
             :key="t.key"
@@ -44,6 +45,7 @@
           >
             {{ t.label }}
           </button>
+          </div>
         </div>
         <p class="summary">共 {{ displayItems.length }} 单</p>
 
@@ -56,6 +58,7 @@
                 <span class="ht-no">{{ g.htNo }}</span>
                 <span v-if="g.goodsName" class="ht-goods">{{ g.goodsName }}</span>
                 <span class="ht-right">
+                  <span v-if="g.items?.length" class="ht-plan">{{ g.items.length }} 单</span>
                   <span v-if="g.deliveryDate" class="delivery-chip">交期 {{ shortDate(g.deliveryDate) }}</span>
                   <el-icon :size="16" class="ht-chevron"><ArrowDown /></el-icon>
                 </span>
@@ -79,19 +82,20 @@
 
       <!-- 其他工序：状态 Tab 单独显示，组内按 HT图号 分组 -->
       <template v-else>
-        <el-input
-          v-model="keyword"
-          class="task-search"
-          size="large"
-          clearable
-          placeholder="搜索 HT图号 / 产品名"
-          @input="onSearchInput"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
-        <div class="seg-control">
+        <div class="task-toolbar">
+          <el-input
+            v-model="keyword"
+            class="task-search"
+            size="large"
+            clearable
+            placeholder="搜索 HT图号 / 产品名"
+            @input="onSearchInput"
+          >
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+          <div class="seg-control">
           <button
             v-for="t in craftTabs"
             :key="t.key"
@@ -101,6 +105,7 @@
           >
             {{ t.label }}
           </button>
+          </div>
         </div>
         <p class="summary">共 {{ total }} 项</p>
 
@@ -113,6 +118,7 @@
                 <span class="ht-no">{{ g.htNo }}</span>
                 <span v-if="g.goodsName" class="ht-goods">{{ g.goodsName }}</span>
                 <span class="ht-right">
+                  <span v-if="g.items?.length" class="ht-plan">{{ g.items.length }} 单</span>
                   <span v-if="g.deliveryDate" class="delivery-chip">交期 {{ shortDate(g.deliveryDate) }}</span>
                   <el-icon :size="16" class="ht-chevron"><ArrowDown /></el-icon>
                 </span>
@@ -694,6 +700,35 @@ onMounted(load)
 @media (min-width: 640px) {
   .task-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ===== 桌面端适配 ===== */
+@media (min-width: 1024px) {
+  .header-inner,
+  .content {
+    max-width: 1200px;
+  }
+
+  .task-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .task-toolbar .task-search {
+    flex: 0 0 340px;
+    margin-bottom: 0;
+  }
+
+  .task-toolbar .seg-control {
+    flex: 1;
+  }
+}
+
+@media (min-width: 1280px) {
+  .task-grid {
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
