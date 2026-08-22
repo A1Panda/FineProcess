@@ -450,13 +450,14 @@ async function submit() {
 }
 
 /* ===== 桌面端适配 ===== */
-.report-dlg {
+/* 弹窗 append-to-body 挂载在 body 下，scoped 选择器匹配不到，必须用 :global */
+:global(.report-dlg) {
   max-width: 420px;
 }
 
 @media (min-width: 768px) {
-  .report-dlg {
-    max-width: 560px;
+  :global(.report-dlg) {
+    max-width: 440px;
   }
 
   /* 表单两栏：报工人 / 良品 / 不良品 并排，减少竖向滚动 */

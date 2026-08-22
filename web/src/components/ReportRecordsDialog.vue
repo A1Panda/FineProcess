@@ -517,13 +517,14 @@ async function saveEdit() {
 }
 
 /* ===== 桌面端适配 ===== */
-:deep(.records-dlg) {
+/* 弹窗 append-to-body 挂载在 body 下，scoped 选择器匹配不到，必须用 :global */
+:global(.records-dlg) {
   max-width: 520px;
 }
 
 @media (min-width: 768px) {
-  :deep(.records-dlg) {
-    max-width: 860px;
+  :global(.records-dlg) {
+    max-width: 600px;
   }
 
   /* 记录行紧凑化：标题行 + 副信息/统计并排 */
@@ -667,10 +668,10 @@ async function saveEdit() {
 .row-nums {
   display: flex;
   gap: 0;
-  margin-top: 8px;
+  margin-top: 10px;
   background: var(--muted);
   border-radius: 12px;
-  padding: 7px 0;
+  padding: 10px 6px;
 }
 
 .stat {
@@ -678,8 +679,9 @@ async function saveEdit() {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
+  padding: 0 8px;
 }
 
 .stat + .stat {
